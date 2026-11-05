@@ -37,6 +37,7 @@ const state = {
   lastT: 0,
   wakeLock: null,
   resumeBlocked: false,
+  startHint: false,     // '▶를 눌러 주세요' 안내를 띄웠는지 (첫 곡이 시작되면 지움)
 };
 
 // ── 화면 요소 ─────────────────────────────────────────────────────────────
@@ -235,6 +236,10 @@ function tick() {
   state.currentIdx = idx;
   renderNow();
   if (idx < 0) return;
+  if (state.startHint) {
+    state.startHint = false;
+    setMsg(el.padNote, '');
+  }
   const tr = state.tracks[idx];
   addHistory(tr);
   const lead = settings.prefix ? (idx === 0 ? '첫 곡, ' : '다음 곡, ') : '';
@@ -280,7 +285,8 @@ function startListening() {
     const st = state.player.getPlayerState();
     // 첫 곡 안내 때문에 잠깐 멈춘 것일 수 있으니, 아직 아무 곡도 시작 안 했을 때만 안내한다.
     if (st !== PLAYING && st !== BUFFERING && !state.busy && state.currentIdx < 0) {
-      setMsg(el.padNote, '영상이 시작되지 않으면 위 영상의 ▶를 한 번 눌러 주세요.', 'warn');
+      setMsg(el.padNote, '광고가 나오는 중이면 끝난 뒤 시작돼요. 영상이 멈춰 있으면 위 영상의 ▶를 한 번 눌러 주세요.', 'warn');
+      state.startHint = true;
     }
   }, 2500);
 }
