@@ -12,6 +12,8 @@ const EDGE_HEAD = new RegExp(`^[${EDGE}.]+`, 'u');
 const EDGE_TAIL = new RegExp(`[${EDGE}]+$`, 'u');
 // 곡 번호: "1." "01)" "#1" "No.1" "Track 1" "01"(0으로 시작하는 두 자리)
 const NUMBERING = /^(?:(?:#|no\.?\s?|track\s?)\d{1,3}|\d{1,3}[.)]|0\d)(?=\s|$)\s*/i;
+// 곡이 아니라 공지로 보이는 줄 ("10:00 이후 광고 없음", "30:00부터 2부")
+const NOTICE = /^(?:이후|부터|까지|에서|~)|광고\s*(?:없|있|제거|포함|나옴|나와)/;
 // 시간표를 빼고 남은 빈 괄호
 const EMPTY_BRACKETS = /[\[(【「<{]\s*[\])】」>}]/g;
 
@@ -53,7 +55,7 @@ export function parseTracklist(text) {
 
     // "00:00 - 03:45 곡" 처럼 끝 시각이 함께 적힌 경우도 있으니 나머지 시간표도 지운다.
     const name = cleanTitle((before + ' ' + after).replace(TS_ALL, '$1'));
-    if (!name) continue;
+    if (!name || NOTICE.test(name)) continue;
     found.push({ t: h * 3600 + mi * 60 + s, text: name });
   }
   found.sort((a, b) => a.t - b.t);

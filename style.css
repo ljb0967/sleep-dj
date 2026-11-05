@@ -7,7 +7,7 @@
   --line: #26222d;
   --fg: #e6d5b8;
   --muted: #988c79;
-  --faint: #625a4f;
+  --faint: #857b6c; /* 판 배경 위에서 4.5:1 이상 */
   --accent: #f2a65a;
   --accent-ink: #1c1309;
   --ok: #a9c48a;
@@ -177,7 +177,19 @@ a { color: var(--accent); }
   user-select: none;
 }
 .tap-hint { color: var(--faint); font-size: 0.82rem; line-height: 1.6; }
-.pad-note { position: relative; z-index: 2; text-align: center; }
+/* 안내 글자는 보이기만 하고 누르기는 판(tap-area)으로 통과시킨다 */
+.pad-note { position: relative; z-index: 2; text-align: center; pointer-events: none; }
+.timer-note {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 2;
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
 .pad.flash::after {
   content: "";
   position: absolute;
@@ -262,7 +274,7 @@ textarea {
 .history-night { list-style: none; margin: 0; padding: 0; }
 .history-item {
   display: grid;
-  grid-template-columns: 3.4em 1fr auto;
+  grid-template-columns: 3.4em 1fr auto auto;
   gap: 10px;
   align-items: center;
   padding: 6px 0;
@@ -276,15 +288,18 @@ textarea {
   color: var(--faint); font-size: 1.2rem;
 }
 .star[aria-pressed="true"] { color: var(--accent); }
+.find { font-size: 0.82rem; padding: 8px 2px; white-space: nowrap; }
 
 /* ── 설정 ── */
-.settings { border-top: 1px solid var(--line); padding-top: 14px; }
+/* details 안에서는 flex gap이 브라우저마다 다르게 먹어서, 설정 칸 사이는 margin으로 띄운다 */
+.settings { display: block; border-top: 1px solid var(--line); padding-top: 14px; }
+.settings > :not(summary) { margin-top: 20px; }
+.settings > .ghost { display: block; }
 .settings summary { cursor: pointer; list-style: none; }
 .settings summary::-webkit-details-marker { display: none; }
 .settings summary h2 { display: inline; }
 .settings summary::after { content: " ＋"; color: var(--faint); }
 .settings[open] summary::after { content: " －"; }
-.settings[open] { gap: 16px; }
 fieldset { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 8px; }
 legend { padding: 0; margin-bottom: 6px; color: var(--muted); font-size: 0.88rem; }
 .choice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; cursor: pointer; }
@@ -295,6 +310,32 @@ legend { padding: 0; margin-bottom: 6px; color: var(--muted); font-size: 0.88rem
 .field small { color: var(--faint); }
 output { color: var(--fg); font-variant-numeric: tabular-nums; margin-left: 6px; }
 input[type="range"] { width: 100%; accent-color: var(--accent); }
+select {
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  max-width: 100%;
+}
+.field > label[for="openai-voice"] { margin-top: 6px; }
+.diag { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; background: var(--surface); }
+.diag[open] { display: flex; flex-direction: column; gap: 10px; }
+.diag summary { cursor: pointer; color: var(--muted); }
+.diag-text {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font: 0.75rem/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--muted);
+  -webkit-user-select: text;
+  user-select: text;
+}
+.diag .ghost { align-self: flex-start; }
 .settings > .ghost { align-self: flex-start; }
 
 .foot { color: var(--faint); font-size: 0.8rem; text-align: center; padding-top: 8px; }
