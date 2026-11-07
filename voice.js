@@ -1,10 +1,12 @@
 // 목소리: 한 번에 한 마디만 말하는 채널.
 // - 기기 음성(speechSynthesis): 무료. 아이폰에서는 영상이 재생된 뒤 소리가 안 나는 경우가 있다.
-// - OpenAI 음성: 문장을 mp3로 받아 <audio>로 재생한다. 미디어 경로라 아이폰에서 더 확실하다.
+// - OpenAI / Typecast 음성: 문장을 mp3로 받아 <audio>로 재생한다. 미디어 경로라 아이폰에서 더 확실하다.
+//   Typecast는 자연스러운 한국어 목소리와 내 목소리(복제)를 쓸 수 있다.
 // 새로 말하면 이전 말은 끊는다. 무엇을 말했고 어떻게 됐는지 진단 기록을 남긴다.
+import { synthesize } from './typecast.js';
 
 export const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts';
-export const OPENAI_VOICES = ['nova', 'shimmer', 'sage', 'coral', 'alloy', 'ballad', 'verse', 'ash', 'echo', 'fable', 'onyx'];
+export const OPENAI_VOICES = ['marin', 'cedar', 'nova', 'shimmer', 'sage', 'coral', 'alloy', 'ballad', 'verse', 'ash', 'echo', 'fable', 'onyx'];
 const TTS_STYLE = '잠들기 직전의 사람에게 들려주듯, 낮고 차분하고 부드럽게 말하세요. 한국어와 영어 이름을 자연스럽게 읽으세요.';
 const CACHE_NAME = 'sdj-tts-v1';
 
@@ -36,10 +38,14 @@ export function createVoice({ getSettings, getPlayerState }) {
   const clipUrls = new Map(); // 문장 → blob URL
   let silentUrl = null;
 
-  const useOpenAI = () => {
+  /** 음성 파일로 말할 수 있으면 그 엔진 이름, 아니면 null(기기 음성) */
+  const clipEngine = () => {
     const s = getSettings();
-    return s.engine === 'openai' && !!s.openaiKey;
+    if (s.engine === 'openai' && s.openaiKey) return 'openai';
+    if (s.engine === 'typecast' && s.typecastKey && s.typecastVoice) return 'typecast';
+    return null;
   };
+  const ENGINE_LABEL = { openai: 'OpenAI', typecast: 'Typecast' };
 
   // ── 진단 기록 ──
   function note(entry) {
@@ -72,7 +78,7 @@ export function createVoice({ getSettings, getPlayerState }) {
     return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
   }
   function unlock() {
-    if (useOpenAI() && !active) {
+    if (clipEngine() && !active) {
       silentUrl ||= makeSilentWav();
       audio.src = silentUrl;
       audio.play().catch(() => {});
@@ -132,10 +138,42 @@ export function createVoice({ getSettings, getPlayerState }) {
     });
   }
 
-  // ── OpenAI 음성 ──
+  // ── 음성 파일 (OpenAI / Typecast) ──
+  async function fetchOpenAI(text, s) {
+    const r = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${s.openaiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: OPENAI_TTS_MODEL, voice: s.openaiVoice, input: text, instructions: TTS_STYLE, response_format: 'mp3' }),
+    });
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      try { msg = (await r.json()).error?.message || msg; } catch { /* 무시 */ }
+      if (r.status === 401) msg = 'OpenAI API 키가 올바르지 않아요.';
+      if (r.status === 429) msg = 'OpenAI 사용 한도에 걸렸어요 (요금 한도나 요청 수).';
+      throw new Error(msg);
+    }
+    return r.blob();
+  }
+
+  async function fetchTypecast(text, s) {
+    const args = { key: s.typecastKey, voiceId: s.typecastVoice, model: s.typecastModel, emotion: s.typecastEmotion, text };
+    try {
+      return await synthesize(args);
+    } catch (err) {
+      if (err.status === 429) { // 무료 플랜은 동시 요청이 2개까지라 잠깐 쉬었다 다시 한다
+        await new Promise((r) => setTimeout(r, 1500));
+        return synthesize(args);
+      }
+      if (err.status === 422 && args.emotion) return synthesize({ ...args, emotion: '' }); // 이 목소리에 없는 감정
+      throw err;
+    }
+  }
+
   async function getClip(text) {
     const s = getSettings();
-    const key = `${OPENAI_TTS_MODEL}|${s.openaiVoice}|${text}`;
+    const engine = clipEngine();
+    const voiceKey = engine === 'typecast' ? `typecast|${s.typecastVoice}|${s.typecastEmotion}` : `${OPENAI_TTS_MODEL}|${s.openaiVoice}`;
+    const key = `${voiceKey}|${text}`;
     if (clipUrls.has(key)) return clipUrls.get(key);
     const req = new Request(`${location.pathname.replace(/[^/]*$/, '')}__tts/${encodeURIComponent(key)}`);
     let blob = null;
@@ -144,19 +182,7 @@ export function createVoice({ getSettings, getPlayerState }) {
       if (hit) blob = await hit.blob();
     } catch { /* Cache API 없음 */ }
     if (!blob) {
-      const r = await fetch('https://api.openai.com/v1/audio/speech', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${s.openaiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: OPENAI_TTS_MODEL, voice: s.openaiVoice, input: text, instructions: TTS_STYLE, response_format: 'mp3' }),
-      });
-      if (!r.ok) {
-        let msg = `HTTP ${r.status}`;
-        try { msg = (await r.json()).error?.message || msg; } catch { /* 무시 */ }
-        if (r.status === 401) msg = 'OpenAI API 키가 올바르지 않아요.';
-        if (r.status === 429) msg = 'OpenAI 사용 한도에 걸렸어요 (요금 한도나 요청 수).';
-        throw new Error(msg);
-      }
-      blob = await r.blob();
+      blob = engine === 'typecast' ? await fetchTypecast(text, s) : await fetchOpenAI(text, s);
       try {
         await (await caches.open(CACHE_NAME)).put(req, new Response(blob, { headers: { 'Content-Type': 'audio/mpeg' } }));
       } catch { /* 저장 못 해도 이번엔 재생 */ }
@@ -166,7 +192,7 @@ export function createVoice({ getSettings, getPlayerState }) {
     return url;
   }
 
-  async function speakOpenAI(parts, entry, setCancel) {
+  async function speakClips(parts, entry, setCancel) {
     let cancelled = false;
     let stopCurrent = () => {};
     setCancel(() => { cancelled = true; stopCurrent(); });
@@ -185,7 +211,7 @@ export function createVoice({ getSettings, getPlayerState }) {
           resolve(v);
         };
         stopCurrent = () => { audio.pause(); end(false, '끊김(새 말)'); };
-        const timer = setTimeout(() => { audio.pause(); end(false, '시간 초과'); }, 15000);
+        const timer = setTimeout(() => { audio.pause(); end(false, '시간 초과'); }, 30000);
         audio.onended = () => end(true);
         audio.onerror = () => end(false, '재생 오류');
         audio.src = url;
@@ -209,10 +235,10 @@ export function createVoice({ getSettings, getPlayerState }) {
     parts = parts.filter(Boolean);
     if (active) active.cancel();
     let cancelFn = () => {};
-    const openai = useOpenAI();
+    const engine = clipEngine();
     const entry = {
       at: new Date(),
-      engine: openai ? 'OpenAI' : '기기',
+      engine: ENGINE_LABEL[engine] || '기기',
       text: parts.join(' '),
       started: false,
       result: '말하는 중',
@@ -223,12 +249,12 @@ export function createVoice({ getSettings, getPlayerState }) {
     job.done = (async () => {
       let ok = false;
       try {
-        ok = openai
-          ? await speakOpenAI(parts, entry, (fn) => { cancelFn = fn; })
+        ok = engine
+          ? await speakClips(parts, entry, (fn) => { cancelFn = fn; })
           : await speakDevice(parts.join(' '), entry, (fn) => { cancelFn = fn; });
       } catch (err) {
-        // OpenAI 음성을 못 만들면 이번 한 번은 기기 음성으로라도 말한다.
-        entry.result = `OpenAI 실패: ${err.message} → 기기 음성으로`;
+        // 음성 파일을 못 만들면 이번 한 번은 기기 음성으로라도 말한다.
+        entry.result = `${ENGINE_LABEL[engine]} 실패: ${err.message} → 기기 음성으로`;
         entry.engine = '기기(대신)';
         changed();
         try { ok = await speakDevice(parts.join(' '), entry, (fn) => { cancelFn = fn; }); } catch { ok = false; }
@@ -247,9 +273,9 @@ export function createVoice({ getSettings, getPlayerState }) {
     while (active) await active.done;
   }
 
-  /** 곡 이름들과 고정 문장을 미리 만들어 둔다 (OpenAI 음성일 때만). */
+  /** 곡 이름들과 고정 문장을 미리 만들어 둔다 (음성 파일로 말할 때만). */
   async function prepare(texts, onProgress) {
-    if (!useOpenAI()) return { done: 0, total: 0, failed: 0 };
+    if (!clipEngine()) return { done: 0, total: 0, failed: 0 };
     const list = [...new Set([...Object.values(PHRASES), ...texts])];
     const queue = [...list];
     const stat = { done: 0, total: list.length, failed: 0, error: '' };
@@ -261,7 +287,7 @@ export function createVoice({ getSettings, getPlayerState }) {
         onProgress?.({ ...stat });
       }
     };
-    await Promise.all([worker(), worker(), worker()]);
+    await Promise.all([worker(), worker()]); // Typecast 무료 플랜 동시 요청 한도가 2개
     return stat;
   }
 
@@ -270,7 +296,7 @@ export function createVoice({ getSettings, getPlayerState }) {
     const ua = navigator.userAgent.match(/(iPhone OS [\d_]+|Android [\d.]+|Windows NT [\d.]+|Mac OS X [\d_]+)/)?.[0] || navigator.userAgent.slice(0, 60);
     const lines = [
       `기기: ${ua}${navigator.standalone ? ' (홈 화면 앱)' : ''}`,
-      `목소리 엔진: ${useOpenAI() ? `OpenAI (${OPENAI_TTS_MODEL}, ${s.openaiVoice})` : '기기 음성'}${s.engine === 'openai' && !s.openaiKey ? ' — 키가 없어 기기 음성 사용' : ''}`,
+      `목소리 엔진: ${{ openai: `OpenAI (${OPENAI_TTS_MODEL}, ${s.openaiVoice})`, typecast: `Typecast (${s.typecastVoice}, ${s.typecastModel}, ${s.typecastEmotion || '감정 없음'})` }[clipEngine()] || '기기 음성'}${s.engine !== 'device' && !clipEngine() ? ' — 키나 목소리가 없어 기기 음성 사용' : ''}`,
       `기기 한국어 목소리: ${koreanVoices().length}개, 선택: ${chosenVoice()?.name || '자동'}`,
       synth ? `기기 음성 상태: speaking=${synth.speaking} pending=${synth.pending} paused=${synth.paused}` : '기기 음성: 없음',
       `안내 방식: ${s.mode === 'pause' ? '멈추고 말하기' : '음악 위에 말하기'}, 빠르기 ${s.rate}`,

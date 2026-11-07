@@ -2,6 +2,12 @@ import {
   parseTracklist, pickTracklist, toSpeech, extractVideoId, indexAt, formatTime, tracksToText,
 } from './tracklist.js';
 import { createVoice, PHRASES, OPENAI_VOICES } from './voice.js';
+import {
+  buildDjRequest, responseText, parseDjScript, trackSignature, isValidIntro, djLine, djOpening,
+} from './dj.js';
+import {
+  listVoices, recommendVoices, voiceSettings, voiceLabel, createClone, toCloneWav, startRecording, READING_SCRIPT,
+} from './typecast.js';
 
 const $ = (sel) => document.querySelector(sel);
 const PLAYING = 1;
@@ -31,6 +37,7 @@ const store = {
 const settings = {
   mode: 'pause', rate: 1, prefix: true, apiKey: '',
   engine: 'device', voiceURI: '', openaiKey: '', openaiVoice: 'nova', sleepMinutes: 0,
+  typecastKey: '', typecastVoice: '', typecastModel: '', typecastEmotion: '', dj: false,
   ...store.get('settings', {}),
 };
 const saveSettings = () => store.set('settings', settings);
@@ -57,6 +64,12 @@ const state = {
   lastTapAt: 0,
   sleepAt: 0,
   sleepTimerFired: false,
+  djScript: null,       // { sig, opening, entries } 이 영상의 DJ 대본
+  tcVoices: [],         // Typecast 목소리 전체
+  tcRecommended: [],
+  recorder: null,       // 내 목소리 녹음 중
+  recordTimer: null,
+  cloneWav: null,       // 등록할 내 목소리 WAV
 };
 
 const playerStateName = () => STATE_NAMES[state.player?.getPlayerState?.()] ?? '없음';
@@ -78,8 +91,14 @@ const el = {
   rate: $('#rate'), rateOut: $('#rate-out'), prefix: $('#prefix'), testVoice: $('#test-voice'),
   deviceField: $('#device-voice-field'), voiceSelect: $('#voice-select'),
   openaiField: $('#openai-field'), openaiKey: $('#openai-key'), openaiSave: $('#openai-save'),
-  openaiVoice: $('#openai-voice'), openaiMsg: $('#openai-msg'),
-  sleepTimer: $('#sleep-timer'),
+  openaiVoice: $('#openai-voice'), openaiVoiceRow: $('#openai-voice-row'), openaiMsg: $('#openai-msg'),
+  typecastField: $('#typecast-field'), typecastKey: $('#typecast-key'), typecastSave: $('#typecast-save'),
+  typecastVoice: $('#typecast-voice'), typecastMsg: $('#typecast-msg'),
+  readingScript: $('#reading-script'), recordBtn: $('#record-btn'), voiceFile: $('#voice-file'),
+  voicePreview: $('#voice-preview'), cloneName: $('#clone-name'), cloneConsent: $('#clone-consent'),
+  cloneBtn: $('#clone-btn'), cloneMsg: $('#clone-msg'),
+  dj: $('#dj'), djField: $('#dj-field'), djRewrite: $('#dj-rewrite'), djMsg: $('#dj-msg'), prefixRow: $('#prefix-row'),
+  settingsBox: $('#settings'), sleepTimer: $('#sleep-timer'),
   apiKey: $('#api-key'), apiSave: $('#api-save'), apiMsg: $('#api-msg'),
   diag: $('#diag'), diagText: $('#diag-text'), diagCopy: $('#diag-copy'),
 };
@@ -281,11 +300,17 @@ function tick() {
   }
   const tr = state.tracks[idx];
   addHistory(tr);
-  const lead = settings.prefix ? (idx === 0 ? PHRASES.first : PHRASES.next) : '';
   const resumeAt = t - tr.t < 4 ? tr.t : null;
-  sayOverMusic([lead, toSpeech(tr.text)], resumeAt);
+  sayOverMusic(announcement(idx), resumeAt);
 }
 setInterval(tick, 250);
+
+/** 곡이 바뀔 때 할 말 */
+function announcement(idx) {
+  if (settings.dj) return [djLine(state.tracks, idx, state.djScript)];
+  const lead = settings.prefix ? (idx === 0 ? PHRASES.first : PHRASES.next) : '';
+  return [lead, toSpeech(state.tracks[idx].text)];
+}
 
 // ── 취침 타이머 ────────────────────────────────────────────────────────────
 function armSleepTimer() {
@@ -355,7 +380,8 @@ function startListening() {
   // 아이폰은 버튼을 누른 그 순간에 소리를 내야 이후에도 소리를 낼 수 있다.
   const again = state.started;
   voice.unlock();
-  voice.say([again ? PHRASES.restart : PHRASES.start]);
+  const greeting = settings.dj ? djOpening(state.djScript) : PHRASES.start;
+  voice.say([again ? PHRASES.restart : greeting]);
   state.resumeBlocked = false;
   state.needsTapToResume = false;
   state.player.playVideo();
@@ -437,8 +463,8 @@ async function openVideo(input) {
   wakeUi();
 
   const cached = store.get(`tracks.${id}`, null);
-  setTracks(cached?.tracks || [], cached?.source || '');
   if (cached?.title) state.videoTitle = cached.title;
+  setTracks(cached?.tracks || [], cached?.source || '');
   renderVideoTitle();
 
   if (!(await ensurePlayer(id))) return;
@@ -514,7 +540,7 @@ function setTracks(tracks, source) {
   el.tracksInput.value = tracksToText(tracks);
   renderTracks();
   renderNow();
-  prepareVoice();
+  refreshDjAndVoice();
 }
 
 function saveTracks() {
@@ -522,19 +548,68 @@ function saveTracks() {
   store.set(`tracks.${state.videoId}`, { tracks: state.tracks, source: state.source, title: state.videoTitle });
 }
 
-// OpenAI 목소리면 곡 이름을 미리 음성 파일로 만들어 둔다 (밤에 기다리지 않게).
-let prepareRun = 0;
-async function prepareVoice() {
-  if (settings.engine !== 'openai' || !settings.openaiKey || !state.tracks.length) {
-    setMsg(el.voiceMsg, '');
+// DJ 대본: 곡 목록이 그대로면 저장해 둔 대본을 쓰고, 바뀌었으면 OpenAI로 새로 쓴다.
+// OpenAI 키가 없거나 실패하면 djLine()이 준비된 멘트를 돌려 쓴다.
+let djRun = 0;
+async function ensureDjScript({ force = false } = {}) {
+  const run = ++djRun;
+  state.djScript = null;
+  setMsg(el.djMsg, '');
+  if (!settings.dj || !state.tracks.length || !state.videoId) return;
+  const tracks = state.tracks;
+  const sig = trackSignature(tracks);
+  const cached = store.get(`dj.${state.videoId}`, null);
+  if (!force && cached?.sig === sig) {
+    state.djScript = cached;
+    setMsg(el.djMsg, `DJ 멘트 ${tracks.length}곡 준비돼 있어요.`, 'ok');
     return;
   }
+  if (!settings.openaiKey) {
+    setMsg(el.djMsg, 'OpenAI 키가 없어서 미리 준비된 멘트를 돌려 써요. 키를 넣으면 곡마다 새 멘트를 써요.', '');
+    return;
+  }
+  setMsg(el.djMsg, `DJ 멘트를 쓰는 중… ${tracks.length}곡이면 1분쯤 걸릴 수 있어요.`);
+  fillVideoTitle(); // 영상 제목의 분위기를 멘트에 참고한다
+  try {
+    const r = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${settings.openaiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildDjRequest({ videoTitle: state.videoTitle, tracks })),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(r.status === 401 ? 'OpenAI API 키가 올바르지 않아요.' : (data.error?.message || `HTTP ${r.status}`));
+    if (run !== djRun) return; // 그 사이 곡 목록이나 영상이 바뀜
+    const script = { sig, ...parseDjScript(responseText(data), tracks) };
+    state.djScript = script;
+    store.set(`dj.${state.videoId}`, script);
+    const bad = script.entries.filter((e) => !isValidIntro(e?.intro)).length;
+    setMsg(el.djMsg, `DJ 멘트 ${tracks.length}곡을 썼어요.${bad ? ` ${bad}곡은 규칙에 안 맞아 준비된 멘트로 바꿨어요.` : ''} 곡 목록에서 읽어 볼 수 있어요.`, 'ok');
+  } catch (err) {
+    if (run === djRun) setMsg(el.djMsg, `DJ 멘트를 쓰지 못해 준비된 멘트를 써요: ${err.message}`, 'warn');
+  }
+}
+
+async function refreshDjAndVoice(options) {
+  await ensureDjScript(options);
+  renderTracks();
+  prepareVoice();
+}
+
+// 음성 파일로 말하는 목소리면 할 말을 미리 만들어 둔다 (밤에 기다리지 않게).
+let prepareRun = 0;
+async function prepareVoice() {
   const run = ++prepareRun;
-  const texts = state.tracks.map((tr) => toSpeech(tr.text));
+  setMsg(el.voiceMsg, '');
+  if (!state.tracks.length) return;
+  const texts = state.tracks.map((tr) => toSpeech(tr.text)); // 판을 눌렀을 때는 곡 이름만 또렷하게 말한다
+  if (settings.dj) {
+    texts.push(djOpening(state.djScript));
+    state.tracks.forEach((_, i) => texts.push(djLine(state.tracks, i, state.djScript)));
+  }
   const stat = await voice.prepare(texts, (s) => {
     if (run === prepareRun) setMsg(el.voiceMsg, `목소리 준비 중… ${s.done} / ${s.total}`);
   });
-  if (run !== prepareRun) return;
+  if (run !== prepareRun || !stat.total) return;
   if (stat.failed) setMsg(el.voiceMsg, `목소리 ${stat.failed}개를 만들지 못했어요: ${stat.error}`, 'error');
   else setMsg(el.voiceMsg, `목소리 준비 끝 (${stat.total}개). 밤에는 바로 재생돼요.`, 'ok');
 }
@@ -752,6 +827,12 @@ function renderTracks() {
     name.className = 'track-name';
     name.textContent = tr.text;
     b.append(time, name);
+    if (settings.dj) {
+      const line = document.createElement('span');
+      line.className = 'track-dj';
+      line.textContent = djLine(state.tracks, i, state.djScript);
+      b.append(line);
+    }
     b.addEventListener('click', () => {
       if (!state.playerReady) return;
       state.player.seekTo(tr.t, true);
@@ -781,7 +862,12 @@ function renderNow() {
 // ── 설정 ──────────────────────────────────────────────────────────────────
 function renderEngine() {
   el.deviceField.hidden = settings.engine !== 'device';
-  el.openaiField.hidden = settings.engine !== 'openai';
+  el.typecastField.hidden = settings.engine !== 'typecast';
+  // OpenAI 키는 OpenAI 목소리뿐 아니라 DJ 멘트 쓰기에도 쓴다.
+  el.openaiField.hidden = settings.engine !== 'openai' && !settings.dj;
+  el.openaiVoiceRow.hidden = settings.engine !== 'openai';
+  el.djField.hidden = !settings.dj;
+  el.prefixRow.hidden = settings.dj;
 }
 
 el.modeRadios.forEach((r) => {
@@ -800,11 +886,21 @@ el.engineRadios.forEach((r) => {
     settings.engine = r.value;
     saveSettings();
     renderEngine();
+    if (r.value === 'typecast') loadTypecastVoices();
     prepareVoice();
     renderDiagnostics();
   });
 });
 renderEngine();
+
+el.dj.checked = settings.dj;
+el.dj.addEventListener('change', () => {
+  settings.dj = el.dj.checked;
+  saveSettings();
+  renderEngine();
+  refreshDjAndVoice();
+});
+el.djRewrite.addEventListener('click', () => refreshDjAndVoice({ force: true }));
 
 function renderVoiceSelect() {
   const voices = voice.koreanVoices();
@@ -831,9 +927,151 @@ el.openaiKey.value = settings.openaiKey;
 el.openaiSave.addEventListener('click', () => {
   settings.openaiKey = el.openaiKey.value.trim();
   saveSettings();
-  setMsg(el.openaiMsg, settings.openaiKey ? '저장했어요. 이 기기에만 보관하고, 곡 이름을 음성으로 만들 때만 OpenAI로 보내요.' : 'OpenAI 키를 지웠어요.', 'ok');
+  setMsg(el.openaiMsg, settings.openaiKey ? '저장했어요. 이 기기에 보관하고, 음성이나 DJ 멘트를 만들 때만 OpenAI로 보내요.' : 'OpenAI 키를 지웠어요.', 'ok');
+  refreshDjAndVoice();
+  renderDiagnostics();
+});
+
+// ── Typecast 목소리 ───────────────────────────────────────────────────────
+function renderTypecastVoices() {
+  const byId = new Map(state.tcVoices.map((v) => [v.voice_id, v]));
+  const recommended = state.tcRecommended.map((r) => byId.get(r.voice_id)).filter(Boolean);
+  const recommendedIds = new Set(recommended.map((v) => v.voice_id));
+  const mine = state.tcVoices.filter((v) => v.voice_type === 'custom');
+  const rest = state.tcVoices.filter((v) => v.voice_type !== 'custom' && !recommendedIds.has(v.voice_id));
+  el.typecastVoice.replaceChildren();
+  for (const [label, voices] of [['내 목소리', mine], ['심야 라디오 추천', recommended], ['전체 목소리', rest]]) {
+    if (!voices.length) continue;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    for (const v of voices) group.append(new Option(voiceLabel(v), v.voice_id));
+    el.typecastVoice.append(group);
+  }
+  el.typecastVoice.value = settings.typecastVoice;
+}
+
+function chooseTypecastVoice(v) {
+  Object.assign(settings, voiceSettings(v));
+  saveSettings();
+  el.typecastVoice.value = v.voice_id;
   prepareVoice();
   renderDiagnostics();
+}
+
+async function loadTypecastVoices() {
+  if (!settings.typecastKey) return;
+  setMsg(el.typecastMsg, '목소리 목록을 불러오는 중…');
+  try {
+    const [voices, recommended] = await Promise.all([
+      listVoices(settings.typecastKey),
+      recommendVoices(settings.typecastKey).catch(() => []),
+    ]);
+    state.tcVoices = voices;
+    state.tcRecommended = recommended;
+    renderTypecastVoices();
+    const current = voices.find((v) => v.voice_id === settings.typecastVoice);
+    const first = voices.find((v) => v.voice_id === recommended[0]?.voice_id) || voices[0];
+    if (!current && first) chooseTypecastVoice(first);
+    setMsg(el.typecastMsg, `목소리 ${voices.length}개를 불러왔어요. 고른 뒤 ‘목소리 들어보기’로 확인해 보세요.`, 'ok');
+  } catch (err) {
+    setMsg(el.typecastMsg, err.message, 'error');
+  }
+}
+
+el.typecastKey.value = settings.typecastKey;
+el.typecastSave.addEventListener('click', () => {
+  settings.typecastKey = el.typecastKey.value.trim();
+  saveSettings();
+  updateCloneButton();
+  if (settings.typecastKey) loadTypecastVoices();
+  else setMsg(el.typecastMsg, 'Typecast 키를 지웠어요.', 'ok');
+});
+el.typecastVoice.addEventListener('change', () => {
+  const v = state.tcVoices.find((x) => x.voice_id === el.typecastVoice.value);
+  if (v) chooseTypecastVoice(v);
+});
+el.settingsBox.addEventListener('toggle', () => {
+  if (el.settingsBox.open && settings.engine === 'typecast' && !state.tcVoices.length) loadTypecastVoices();
+});
+
+// ── 내 목소리 등록 ────────────────────────────────────────────────────────
+el.readingScript.textContent = READING_SCRIPT;
+
+function updateCloneButton() {
+  el.cloneBtn.disabled = !(state.cloneWav && el.cloneConsent.checked && settings.typecastKey);
+}
+el.cloneConsent.addEventListener('change', updateCloneButton);
+
+async function useVoiceSample(blob) {
+  state.cloneWav = null;
+  el.voicePreview.hidden = true;
+  updateCloneButton();
+  setMsg(el.cloneMsg, '음성을 확인하는 중…');
+  try {
+    const { wav, seconds, trimmed } = await toCloneWav(blob);
+    state.cloneWav = wav;
+    el.voicePreview.src = URL.createObjectURL(wav);
+    el.voicePreview.hidden = false;
+    setMsg(el.cloneMsg, `${seconds}초 준비됐어요.${trimmed ? ' 150초가 넘어서 앞부분만 써요.' : ''} 들어 보고 괜찮으면 아래 버튼을 눌러 주세요.`, 'ok');
+  } catch (err) {
+    setMsg(el.cloneMsg, `음성을 쓸 수 없어요. ${err.message}`, 'error');
+  }
+  updateCloneButton();
+}
+
+async function stopRecording() {
+  clearInterval(state.recordTimer);
+  const recorder = state.recorder;
+  state.recorder = null;
+  el.recordBtn.textContent = '다시 녹음하기';
+  useVoiceSample(await recorder.stop());
+}
+
+el.recordBtn.addEventListener('click', async () => {
+  if (state.recorder) {
+    stopRecording();
+    return;
+  }
+  if (state.player?.getPlayerState?.() === PLAYING) state.player.pauseVideo();
+  try {
+    state.recorder = await startRecording();
+  } catch {
+    setMsg(el.cloneMsg, '마이크를 쓸 수 없어요. 설정에서 이 앱의 마이크 권한을 허용하거나, 음성 메모 파일을 골라 주세요.', 'error');
+    return;
+  }
+  const started = Date.now();
+  const show = () => {
+    const sec = Math.floor((Date.now() - started) / 1000);
+    el.recordBtn.textContent = `녹음 끝내기 (${sec}초)`;
+    if (sec >= 150) stopRecording();
+  };
+  show();
+  state.recordTimer = setInterval(show, 500);
+  setMsg(el.cloneMsg, '위 글을 차분하게 읽어 주세요. 1분쯤이면 충분해요.');
+});
+
+el.voiceFile.addEventListener('change', () => {
+  const file = el.voiceFile.files?.[0];
+  if (file) useVoiceSample(file);
+});
+
+el.cloneBtn.addEventListener('click', async () => {
+  el.cloneBtn.disabled = true;
+  setMsg(el.cloneMsg, '내 목소리를 만드는 중…');
+  try {
+    const name = el.cloneName.value.trim() || '내 목소리';
+    const made = await createClone({ key: settings.typecastKey, wav: state.cloneWav, name });
+    if (made.status === 'failed') throw new Error('목소리를 만들지 못했어요. 조용한 곳에서 다시 녹음해 주세요.');
+    Object.assign(settings, { typecastVoice: made.voice_id, typecastModel: made.model, typecastEmotion: '' });
+    saveSettings();
+    await loadTypecastVoices();
+    el.typecastVoice.value = made.voice_id;
+    prepareVoice();
+    setMsg(el.cloneMsg, '내 목소리를 만들었어요. ‘목소리 들어보기’로 확인해 보세요.', 'ok');
+  } catch (err) {
+    setMsg(el.cloneMsg, err.message, 'error');
+    updateCloneButton();
+  }
 });
 
 el.rate.value = String(settings.rate);
@@ -850,8 +1088,8 @@ el.prefix.addEventListener('change', () => {
 });
 el.testVoice.addEventListener('click', () => {
   voice.unlock();
-  const sample = state.tracks[0]?.text || '아이유 - 밤편지';
-  voice.say([settings.prefix ? PHRASES.next : '', toSpeech(sample)]);
+  if (state.tracks.length) voice.say(announcement(0));
+  else voice.say([PHRASES.next, '아이유, 밤편지']);
 });
 
 el.sleepTimer.value = String(settings.sleepMinutes);
@@ -892,6 +1130,8 @@ el.diagCopy.addEventListener('click', async () => {
 });
 
 // ── 처음 화면 ─────────────────────────────────────────────────────────────
+updateCloneButton();
+if (settings.engine === 'typecast') loadTypecastVoices();
 renderSaved();
 renderHistory();
 renderNow();

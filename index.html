@@ -95,8 +95,17 @@
       <div id="history-list"></div>
     </section>
 
-    <details class="block settings">
+    <details id="settings" class="block settings">
       <summary><h2>설정</h2></summary>
+      <fieldset>
+        <legend>곡 소개</legend>
+        <label class="choice"><input id="dj" type="checkbox"> 라디오 DJ처럼 소개하기 <small>“오늘 유난히 길었다는 분이 신청하셨어요. 아이유의 밤편지입니다.”처럼 말해요</small></label>
+      </fieldset>
+      <div id="dj-field" class="field" hidden>
+        <p class="help">OpenAI 키가 있으면 곡 목록에 맞춰 멘트를 새로 쓰고, 없으면 준비된 멘트를 돌려 써요. 사연은 분위기를 위해 지어낸 것이고, 곡에 대한 사실은 말하지 않게 했어요. 가수와 제목은 곡 목록 글자 그대로 읽어요.</p>
+        <button id="dj-rewrite" class="ghost" type="button">멘트 다시 쓰기</button>
+        <p id="dj-msg" class="msg" role="status"></p>
+      </div>
       <fieldset>
         <legend>곡 이름을 말할 때</legend>
         <label class="choice"><input type="radio" name="mode" value="pause" id="mode-pause"> 음악을 잠깐 멈추고 말하기 <small>잘 들림 · 곡 처음으로 되돌려 이어 재생</small></label>
@@ -105,6 +114,7 @@
       <fieldset>
         <legend>목소리</legend>
         <label class="choice"><input type="radio" name="engine" value="device" id="engine-device"> 기기 기본 목소리 <small>무료 · 아이폰에서는 영상이 재생된 뒤 소리가 안 나는 경우가 있어요</small></label>
+        <label class="choice"><input type="radio" name="engine" value="typecast" id="engine-typecast"> Typecast 한국어 목소리 · 내 목소리 <small>자연스러운 한국어 성우 목소리 · 무료 플랜 있음 · 내 목소리는 유료 API 플랜 필요</small></label>
         <label class="choice"><input type="radio" name="engine" value="openai" id="engine-openai"> OpenAI 목소리 <small>음성 파일로 재생해서 아이폰에서 더 확실해요 · OpenAI API 키 필요 · 사용료가 조금 들어요</small></label>
       </fieldset>
       <div id="device-voice-field" class="field">
@@ -112,22 +122,49 @@
         <select id="voice-select"><option value="">자동 (추천)</option></select>
         <p class="help">아이폰에서는 종류를 직접 고르면 소리가 안 나거나 다른 목소리가 나올 수 있어요. 문제가 있으면 ‘자동’으로 두세요.</p>
       </div>
+      <div id="typecast-field" class="field" hidden>
+        <label for="typecast-key">Typecast API 키</label>
+        <p class="help">typecast.ai의 API 콘솔에서 발급받아요. 키는 이 기기에 보관하고, 음성을 만들 때만 Typecast로 보내요. 한 번 만든 음성은 기기에 저장해 다시 쓰므로, 영상마다 처음 한 번만 크레딧이 들어요.</p>
+        <div class="load-row">
+          <input id="typecast-key" type="password" autocomplete="off" spellcheck="false" placeholder="API 키">
+          <button id="typecast-save" class="ghost" type="button">저장</button>
+        </div>
+        <p id="typecast-msg" class="msg" role="status"></p>
+        <label for="typecast-voice">목소리 종류</label>
+        <select id="typecast-voice"></select>
+        <details id="my-voice" class="diag">
+          <summary>내 목소리 만들기</summary>
+          <p class="help">본인 목소리만 등록해 주세요. Typecast 유료 API 플랜이 필요해요. 1분쯤 아래 글을 잠들기 전 말투로 읽으면, 그 말투로 곡을 소개해 줘요. 조용한 곳에서 녹음할수록 좋아요.</p>
+          <p id="reading-script" class="reading-script"></p>
+          <button id="record-btn" class="primary" type="button">녹음 시작</button>
+          <label for="voice-file" class="file-label">또는 음성 메모 파일 고르기 (5초~150초)</label>
+          <input id="voice-file" type="file" accept="audio/*">
+          <audio id="voice-preview" controls hidden></audio>
+          <label for="clone-name" class="file-label">목소리 이름</label>
+          <input id="clone-name" class="text-input" type="text" maxlength="30" value="내 목소리" autocomplete="off">
+          <label class="choice"><input id="clone-consent" type="checkbox"> 이 음성은 제 목소리이고, 복제 목소리를 만드는 데 동의해요</label>
+          <button id="clone-btn" class="primary" type="button" disabled>내 목소리 만들기</button>
+          <p id="clone-msg" class="msg" role="status"></p>
+        </details>
+      </div>
       <div id="openai-field" class="field" hidden>
         <label for="openai-key">OpenAI API 키</label>
-        <p class="help">키는 이 기기에 보관하고, 곡 이름을 음성으로 만들 때만 OpenAI로 보내요. 사용 한도를 낮게 정한 키를 따로 만들어 쓰는 걸 권해요. 한 번 만든 음성은 기기에 저장해 다시 쓰므로, 영상마다 처음 한 번만 비용이 들어요.</p>
+        <p class="help">키는 이 기기에 보관하고, 음성이나 DJ 멘트를 만들 때만 OpenAI로 보내요. 사용 한도를 낮게 정한 키를 따로 만들어 쓰는 걸 권해요. 만든 음성과 멘트는 기기에 저장해 다시 쓰므로, 영상마다 처음 한 번만 비용이 들어요.</p>
         <div class="load-row">
           <input id="openai-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
           <button id="openai-save" class="ghost" type="button">저장</button>
         </div>
         <p id="openai-msg" class="msg" role="status"></p>
-        <label for="openai-voice">목소리 종류</label>
-        <select id="openai-voice"></select>
+        <div id="openai-voice-row" class="field">
+          <label for="openai-voice">목소리 종류</label>
+          <select id="openai-voice"></select>
+        </div>
       </div>
       <div class="field">
         <label for="rate">말 빠르기 <output id="rate-out" for="rate">1.0배</output></label>
         <input id="rate" type="range" min="0.6" max="1.4" step="0.1" value="1">
       </div>
-      <label class="choice"><input id="prefix" type="checkbox"> 곡 이름 앞에 “다음 곡”이라고 말하기</label>
+      <label id="prefix-row" class="choice"><input id="prefix" type="checkbox"> 곡 이름 앞에 “다음 곡”이라고 말하기</label>
       <button id="test-voice" class="ghost" type="button">목소리 들어보기</button>
 
       <div class="field">
