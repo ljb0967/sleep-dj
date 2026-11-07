@@ -1,13 +1,13 @@
 import {
   parseTracklist, pickTracklist, toSpeech, extractVideoId, indexAt, formatTime, tracksToText,
-} from './tracklist.js';
-import { createVoice, PHRASES, OPENAI_VOICES } from './voice.js';
+} from './tracklist.js?v=20261107c';
+import { createVoice, PHRASES, OPENAI_VOICES } from './voice.js?v=20261107c';
 import {
-  buildDjRequest, responseText, parseDjScript, trackSignature, isValidIntro, djLine, djOpening,
-} from './dj.js';
+  buildDjRequest, responseText, parseDjScript, trackSignature, isValidIntro, djLine, djOpening, songSentence,
+} from './dj.js?v=20261107c';
 import {
   listVoices, recommendVoices, voiceSettings, voiceLabel, createClone, toCloneWav, startRecording, READING_SCRIPT,
-} from './typecast.js';
+} from './typecast.js?v=20261107c';
 
 const $ = (sel) => document.querySelector(sel);
 const PLAYING = 1;
@@ -305,11 +305,16 @@ function tick() {
 }
 setInterval(tick, 250);
 
+/** 말로 읽는 곡 이름 문장: "지드래곤의 무제입니다." style을 주지 않으면 곡마다 말투가 돌아간다. */
+function spokenSong(idx, style = idx) {
+  return songSentence(state.tracks[idx], state.djScript?.entries?.[idx], style);
+}
+
 /** 곡이 바뀔 때 할 말 */
 function announcement(idx) {
   if (settings.dj) return [djLine(state.tracks, idx, state.djScript)];
   const lead = settings.prefix ? (idx === 0 ? PHRASES.first : PHRASES.next) : '';
-  return [lead, toSpeech(state.tracks[idx].text)];
+  return [lead, spokenSong(idx)];
 }
 
 // ── 취침 타이머 ────────────────────────────────────────────────────────────
@@ -438,7 +443,7 @@ el.tap.addEventListener('click', () => {
   el.pad.classList.remove('flash');
   void el.pad.offsetWidth;
   el.pad.classList.add('flash');
-  sayOverMusic([PHRASES.now, toSpeech(tr.text), result], null, { interrupt: true });
+  sayOverMusic([PHRASES.now, spokenSong(state.currentIdx, 0), result], null, { interrupt: true });
 });
 
 // ── 영상 불러오기 ──────────────────────────────────────────────────────────
@@ -548,14 +553,15 @@ function saveTracks() {
   store.set(`tracks.${state.videoId}`, { tracks: state.tracks, source: state.source, title: state.videoTitle });
 }
 
-// DJ 대본: 곡 목록이 그대로면 저장해 둔 대본을 쓰고, 바뀌었으면 OpenAI로 새로 쓴다.
-// OpenAI 키가 없거나 실패하면 djLine()이 준비된 멘트를 돌려 쓴다.
+// 곡 대본(읽는 법 + DJ 멘트): 곡 목록이 그대로면 저장해 둔 대본을 쓰고, 바뀌었으면 OpenAI로 새로 쓴다.
+// 읽는 법은 DJ를 꺼도 쓰므로 OpenAI 키가 있으면 항상 만든다.
+// OpenAI 키가 없거나 실패하면 규칙으로 다듬은 이름과 준비된 멘트를 쓴다.
 let djRun = 0;
 async function ensureDjScript({ force = false } = {}) {
   const run = ++djRun;
   state.djScript = null;
   setMsg(el.djMsg, '');
-  if (!settings.dj || !state.tracks.length || !state.videoId) return;
+  if (!state.tracks.length || !state.videoId) return;
   const tracks = state.tracks;
   const sig = trackSignature(tracks);
   const cached = store.get(`dj.${state.videoId}`, null);
@@ -565,10 +571,10 @@ async function ensureDjScript({ force = false } = {}) {
     return;
   }
   if (!settings.openaiKey) {
-    setMsg(el.djMsg, 'OpenAI 키가 없어서 미리 준비된 멘트를 돌려 써요. 키를 넣으면 곡마다 새 멘트를 써요.', '');
+    setMsg(el.djMsg, 'OpenAI 키가 없어서 미리 준비된 멘트를 돌려 써요. 키를 넣으면 곡마다 새 멘트를 쓰고 곡 이름도 더 자연스럽게 읽어요.', '');
     return;
   }
-  setMsg(el.djMsg, `DJ 멘트를 쓰는 중… ${tracks.length}곡이면 1분쯤 걸릴 수 있어요.`);
+  setMsg(settings.dj ? el.djMsg : el.voiceMsg, `곡 이름 읽는 법과 멘트를 쓰는 중… ${tracks.length}곡이면 1분쯤 걸릴 수 있어요.`);
   fillVideoTitle(); // 영상 제목의 분위기를 멘트에 참고한다
   try {
     const r = await fetch('https://api.openai.com/v1/responses', {
@@ -601,10 +607,12 @@ async function prepareVoice() {
   const run = ++prepareRun;
   setMsg(el.voiceMsg, '');
   if (!state.tracks.length) return;
-  const texts = state.tracks.map((tr) => toSpeech(tr.text)); // 판을 눌렀을 때는 곡 이름만 또렷하게 말한다
+  const texts = state.tracks.map((_, i) => spokenSong(i, 0)); // 판을 눌렀을 때는 곡 이름만 또렷하게 말한다
   if (settings.dj) {
     texts.push(djOpening(state.djScript));
     state.tracks.forEach((_, i) => texts.push(djLine(state.tracks, i, state.djScript)));
+  } else {
+    state.tracks.forEach((_, i) => texts.push(spokenSong(i)));
   }
   const stat = await voice.prepare(texts, (s) => {
     if (run === prepareRun) setMsg(el.voiceMsg, `목소리 준비 중… ${s.done} / ${s.total}`);
@@ -827,12 +835,11 @@ function renderTracks() {
     name.className = 'track-name';
     name.textContent = tr.text;
     b.append(time, name);
-    if (settings.dj) {
-      const line = document.createElement('span');
-      line.className = 'track-dj';
-      line.textContent = djLine(state.tracks, i, state.djScript);
-      b.append(line);
-    }
+    // 실제로 어떻게 읽을지 미리 보여 준다.
+    const line = document.createElement('span');
+    line.className = 'track-dj';
+    line.textContent = settings.dj ? djLine(state.tracks, i, state.djScript) : spokenSong(i);
+    b.append(line);
     b.addEventListener('click', () => {
       if (!state.playerReady) return;
       state.player.seekTo(tr.t, true);
@@ -863,8 +870,6 @@ function renderNow() {
 function renderEngine() {
   el.deviceField.hidden = settings.engine !== 'device';
   el.typecastField.hidden = settings.engine !== 'typecast';
-  // OpenAI 키는 OpenAI 목소리뿐 아니라 DJ 멘트 쓰기에도 쓴다.
-  el.openaiField.hidden = settings.engine !== 'openai' && !settings.dj;
   el.openaiVoiceRow.hidden = settings.engine !== 'openai';
   el.djField.hidden = !settings.dj;
   el.prefixRow.hidden = settings.dj;

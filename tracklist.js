@@ -88,19 +88,54 @@ export function pickTracklist(description, comments = []) {
 }
 
 const NOISE = '(?:official|m\\/?v|lyrics?|audio|visuali[sz]er|가사|뮤직\\s?비디오|공식|eng\\s?sub|4k|hd)';
-const NOISE_BRACKETS = new RegExp(`[(\\[【][^()\\[\\]【】]*${NOISE}[^()\\[\\]【】]*[)\\]】]`, 'gi');
 
-/** 화면용 곡 이름 → 소리 내어 읽기 좋은 문장 ("아이유 - 밤편지 (feat. X)" → "아이유, 밤편지 피처링 X") */
-export function toSpeech(text) {
-  let x = ` ${text} `;
-  x = x.replace(/\p{Extended_Pictographic}|️/gu, ' ');
-  x = x.replace(NOISE_BRACKETS, ' ');
-  x = x.replace(/(^|[\s(\[])(?:feat|ft)\.?\s/gi, '$1피처링 ');
+// 가수와 제목을 가르는 표시. "G-DRAGON"처럼 이름 안의 하이픈은 건드리지 않는다.
+const SONG_SEPARATOR = /\s+[-–—|/:]\s+|\s*_\s*/;
+const BRACKETED = /[(\[【「『][^()\[\]【】「」『』]*[)\]】」』]/g;
+const HANGUL = /[가-힣]/;
+const HANJA = /[㐀-鿿豈-﫿]/;
+const YEAR = /(?:^|\D)(?:19|20)\d{2}(?:\D|$)/;
+const NOISE_WORD = new RegExp(NOISE, 'i');
+// 기기 목소리가 글자 그대로 읽기 쉬운 이름만 적어 둔다. 나머지는 OpenAI 키가 있으면 AI가 읽는 법을 준다.
+const READ_AS = {
+  'g-dragon': '지드래곤', gd: '지디', iu: '아이유', bts: '비티에스', 'exo': '엑소', 'nct': '엔시티',
+  'aespa': '에스파', 'newjeans': '뉴진스', 'ive': '아이브', 'twice': '트와이스', 'bigbang': '빅뱅', 'big bang': '빅뱅',
+};
+
+/** "G-DRAGON_무제" → ['G-DRAGON', '무제']. 나눌 표시가 없으면 null */
+export function splitSong(text) {
+  const parts = String(text).split(SONG_SEPARATOR).map((s) => s.trim()).filter(Boolean);
+  return parts.length >= 2 ? [parts[0], parts.slice(1).join(' ')] : null;
+}
+
+/**
+ * 가수나 제목 한 조각을 말로 부르는 모양으로 다듬는다.
+ * "무제(無題) (Untitled, 2014)" → "무제", "던 (DAWN)" → "던", "IU (아이유)" → "아이유"
+ */
+export function speakPiece(piece) {
+  let x = ` ${piece} `.replace(/\p{Extended_Pictographic}|️/gu, ' ');
+  const koreanOutside = HANGUL.test(x.replace(BRACKETED, ' '));
+  let koreanName = '';
+  x = x.replace(BRACKETED, (group) => {
+    const inner = group.slice(1, -1).trim();
+    if (/^(?:feat|ft)\b\.?\s*/i.test(inner)) return ` 피처링 ${inner.replace(/^(?:feat|ft)\b\.?\s*/i, '')} `;
+    if (NOISE_WORD.test(inner) || YEAR.test(inner)) return ' ';
+    if (HANJA.test(inner) && !HANGUL.test(inner)) return ' '; // 한자 병기
+    if (koreanOutside && !HANGUL.test(inner)) return ' '; // 영어 병기
+    if (!koreanOutside && HANGUL.test(inner)) koreanName = inner; // 한글 이름이 괄호 안에 있으면 그쪽으로 읽는다
+    return ` ${inner} `;
+  });
+  if (koreanName) x = koreanName;
+  x = x.replace(/(^|\s)(?:feat|ft)\.?\s/gi, '$1피처링 ');
   x = x.replace(/[♪♬♩♫♡♥★☆※#*_~<>\[\]【】「」『』〈〉《》()■-◿]/g, ' ');
-  x = x.replace(/\s+[-–—|/:]\s+/g, ', ');
-  x = x.replace(/\s{2,}/g, ' ').replace(/\s+,/g, ',').trim();
-  x = x.replace(/^[,\s]+|[,\s]+$/g, '');
-  return x;
+  x = x.replace(/\s{2,}/g, ' ').replace(/\s+,/g, ',').trim().replace(/^[,\s]+|[,\s]+$/g, '');
+  return READ_AS[x.toLowerCase()] || x;
+}
+
+/** 화면용 곡 이름 → 소리 내어 읽기 좋은 문장 ("던 (DAWN)_빛이 나는 너에게" → "던, 빛이 나는 너에게") */
+export function toSpeech(text) {
+  const parts = splitSong(text);
+  return parts ? `${speakPiece(parts[0])}, ${speakPiece(parts[1])}` : speakPiece(text);
 }
 
 /** 공유 문구나 링크에서 유튜브 영상 ID(11자)를 꺼낸다. */
