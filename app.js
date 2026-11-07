@@ -1,13 +1,13 @@
 import {
   parseTracklist, pickTracklist, toSpeech, extractVideoId, indexAt, formatTime, tracksToText,
-} from './tracklist.js?v=20261107c';
-import { createVoice, PHRASES, OPENAI_VOICES } from './voice.js?v=20261107c';
+} from './tracklist.js?v=20261107d';
+import { createVoice, PHRASES, OPENAI_VOICES } from './voice.js?v=20261107d';
 import {
   buildDjRequest, responseText, parseDjScript, trackSignature, isValidIntro, djLine, djOpening, songSentence,
-} from './dj.js?v=20261107c';
+} from './dj.js?v=20261107d';
 import {
   listVoices, recommendVoices, voiceSettings, voiceLabel, createClone, toCloneWav, startRecording, READING_SCRIPT,
-} from './typecast.js?v=20261107c';
+} from './typecast.js?v=20261107d';
 
 const $ = (sel) => document.querySelector(sel);
 const PLAYING = 1;
@@ -83,7 +83,7 @@ const el = {
   nowLabel: $('#now-label'), nowTitle: $('#now-title'), nowNext: $('#now-next'), padNote: $('#pad-note'),
   timerNote: $('#timer-note'), menu: $('#menu-btn'),
   trackMeta: $('#tracks-meta'), trackList: $('#track-list'), tracksEdit: $('#tracks-edit'),
-  tracksInput: $('#tracks-input'), tracksApply: $('#tracks-apply'), tracksMsg: $('#tracks-msg'), voiceMsg: $('#voice-msg'),
+  tracksInput: $('#tracks-input'), tracksApply: $('#tracks-apply'), tracksMsg: $('#tracks-msg'), voiceMsg: $('#voice-msg'), namesMsg: $('#names-msg'),
   savedList: $('#saved-list'), savedEmpty: $('#saved-empty'), copySaved: $('#copy-saved'), savedMsg: $('#saved-msg'),
   historyList: $('#history-list'), historyEmpty: $('#history-empty'),
   modeRadios: document.querySelectorAll('input[name="mode"]'),
@@ -557,24 +557,31 @@ function saveTracks() {
 // 읽는 법은 DJ를 꺼도 쓰므로 OpenAI 키가 있으면 항상 만든다.
 // OpenAI 키가 없거나 실패하면 규칙으로 다듬은 이름과 준비된 멘트를 쓴다.
 let djRun = 0;
+// 곡 목록 위와 설정의 DJ 칸 두 곳에 보여 준다. DJ를 꺼도 읽는 법의 상태는 보여야 해서다.
+function scriptMsg(text, kind = '') {
+  setMsg(el.namesMsg, text, kind);
+  setMsg(el.djMsg, text, kind);
+}
+
 async function ensureDjScript({ force = false } = {}) {
   const run = ++djRun;
   state.djScript = null;
-  setMsg(el.djMsg, '');
+  scriptMsg('');
   if (!state.tracks.length || !state.videoId) return;
   const tracks = state.tracks;
   const sig = trackSignature(tracks);
   const cached = store.get(`dj.${state.videoId}`, null);
   if (!force && cached?.sig === sig) {
     state.djScript = cached;
-    setMsg(el.djMsg, `DJ 멘트 ${tracks.length}곡 준비돼 있어요.`, 'ok');
     return;
   }
   if (!settings.openaiKey) {
-    setMsg(el.djMsg, 'OpenAI 키가 없어서 미리 준비된 멘트를 돌려 써요. 키를 넣으면 곡마다 새 멘트를 쓰고 곡 이름도 더 자연스럽게 읽어요.', '');
+    const english = tracks.filter((tr) => /[A-Za-z]/.test(toSpeech(tr.text))).length;
+    if (english) scriptMsg(`영어 이름이 들어간 ${english}곡은 지금 영어 그대로 읽어요. 설정에 OpenAI 키를 넣으면 “베이비몬스터의 디저브”처럼 한글 발음으로 읽어요.`, 'warn');
+    else if (settings.dj) scriptMsg('OpenAI 키가 없어서 미리 준비된 멘트를 돌려 써요. 키를 넣으면 곡마다 새 멘트를 써요.');
     return;
   }
-  setMsg(settings.dj ? el.djMsg : el.voiceMsg, `곡 이름 읽는 법과 멘트를 쓰는 중… ${tracks.length}곡이면 1분쯤 걸릴 수 있어요.`);
+  scriptMsg(`곡 이름 읽는 법과 멘트를 쓰는 중… ${tracks.length}곡이면 1분쯤 걸릴 수 있어요.`);
   fillVideoTitle(); // 영상 제목의 분위기를 멘트에 참고한다
   try {
     const r = await fetch('https://api.openai.com/v1/responses', {
@@ -589,9 +596,9 @@ async function ensureDjScript({ force = false } = {}) {
     state.djScript = script;
     store.set(`dj.${state.videoId}`, script);
     const bad = script.entries.filter((e) => !isValidIntro(e?.intro)).length;
-    setMsg(el.djMsg, `DJ 멘트 ${tracks.length}곡을 썼어요.${bad ? ` ${bad}곡은 규칙에 안 맞아 준비된 멘트로 바꿨어요.` : ''} 곡 목록에서 읽어 볼 수 있어요.`, 'ok');
+    scriptMsg(`${tracks.length}곡의 읽는 법과 멘트를 준비했어요.${settings.dj && bad ? ` ${bad}곡은 규칙에 안 맞아 준비된 멘트로 바꿨어요.` : ''} 곡 아래 문장대로 읽어요.`, 'ok');
   } catch (err) {
-    if (run === djRun) setMsg(el.djMsg, `DJ 멘트를 쓰지 못해 준비된 멘트를 써요: ${err.message}`, 'warn');
+    if (run === djRun) scriptMsg(`곡 이름 읽는 법을 받지 못해서 영어 이름은 그대로 읽어요: ${err.message}`, 'error');
   }
 }
 

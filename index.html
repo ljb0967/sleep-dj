@@ -16,8 +16,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=20261107c">
-  <script type="module" src="app.js?v=20261107c"></script>
+  <link rel="stylesheet" href="style.css?v=20261107d">
+  <script type="module" src="app.js?v=20261107d"></script>
 </head>
 <body>
   <div class="app">
@@ -65,6 +65,7 @@
         <span id="tracks-meta" class="meta"></span>
       </div>
       <p id="tracks-msg" class="msg" role="status"></p>
+      <p id="names-msg" class="msg" role="status"></p>
       <p id="voice-msg" class="msg" role="status"></p>
       <ol id="track-list" class="track-list"></ol>
       <details id="tracks-edit" class="edit">
@@ -149,7 +150,7 @@
       </div>
       <div id="openai-field" class="field">
         <label for="openai-key">OpenAI API 키 <small>(선택)</small></label>
-        <p class="help">넣어 두면 “G-DRAGON_무제(無題)”를 “지드래곤의 무제”처럼 말로 읽고, DJ 멘트도 곡에 맞춰 써요. 없으면 괄호와 연도를 빼고 “던, 빛이 나는 너에게”처럼 읽어요. 키는 이 기기에 보관하고 이때만 OpenAI로 보내요. 영상마다 처음 한 번만 비용이 들고, 사용 한도를 낮게 정한 키를 쓰는 걸 권해요.</p>
+        <p class="help">넣어 두면 “babymonster_deserve”를 “베이비몬스터의 디저브”처럼 한글 발음으로 읽고, DJ 멘트도 곡에 맞춰 써요. 없으면 영어 이름은 영어 그대로 읽어요. 키는 이 기기에 보관하고 이때만 OpenAI로 보내요. 영상마다 처음 한 번만 비용이 들고, 사용 한도를 낮게 정한 키를 쓰는 걸 권해요.</p>
         <div class="load-row">
           <input id="openai-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
           <button id="openai-save" class="ghost" type="button">저장</button>
