@@ -58,10 +58,16 @@ export async function listVoices(key) {
   const get = async (query) => {
     const r = await fetch(`${API}/v3/voices?${query}`, { headers: { 'X-API-KEY': key } });
     if (!r.ok) throw await fail(r);
-    return r.json();
+    const json = await r.json();
+    return Array.isArray(json) ? json : (json.voices || json.items || json.data || []);
   };
-  const [custom, original] = await Promise.all([get('voice_type=custom'), get(`voice_type=original&model=${TC_MODEL}`)]);
-  return [...custom, ...original];
+  // 내 목소리가 없는 플랜에서 이 요청이 실패해도 성우 목소리는 보여 준다.
+  const [custom, original] = await Promise.all([
+    get('voice_type=custom').catch(() => []),
+    get(`voice_type=original&model=${TC_MODEL}`),
+  ]);
+  // 플랜에 따라 모델별 목록이 비어 있을 수 있어서, 그때는 모델 조건 없이 다시 본다.
+  return [...custom, ...(original.length ? original : await get('voice_type=original'))];
 }
 
 /** 심야 라디오에 어울리는 추천 목소리 */

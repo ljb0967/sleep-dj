@@ -940,6 +940,10 @@ function renderTypecastVoices() {
   const mine = state.tcVoices.filter((v) => v.voice_type === 'custom');
   const rest = state.tcVoices.filter((v) => v.voice_type !== 'custom' && !recommendedIds.has(v.voice_id));
   el.typecastVoice.replaceChildren();
+  if (!state.tcVoices.length) {
+    showTypecastPlaceholder(settings.typecastKey ? '목소리가 없어요' : 'API 키를 넣으면 목록이 나와요');
+    return;
+  }
   for (const [label, voices] of [['내 목소리', mine], ['심야 라디오 추천', recommended], ['전체 목소리', rest]]) {
     if (!voices.length) continue;
     const group = document.createElement('optgroup');
@@ -950,6 +954,11 @@ function renderTypecastVoices() {
   el.typecastVoice.value = settings.typecastVoice;
 }
 
+// 목록이 없을 때 빈 칸 대신 지금 상태를 보여 준다.
+function showTypecastPlaceholder(text) {
+  el.typecastVoice.replaceChildren(new Option(text, ''));
+}
+
 function chooseTypecastVoice(v) {
   Object.assign(settings, voiceSettings(v));
   saveSettings();
@@ -958,9 +967,12 @@ function chooseTypecastVoice(v) {
   renderDiagnostics();
 }
 
+let tcLoading = false;
 async function loadTypecastVoices() {
-  if (!settings.typecastKey) return;
+  if (!settings.typecastKey || tcLoading) return;
+  tcLoading = true;
   setMsg(el.typecastMsg, '목소리 목록을 불러오는 중…');
+  if (!state.tcVoices.length) showTypecastPlaceholder('불러오는 중…');
   try {
     const [voices, recommended] = await Promise.all([
       listVoices(settings.typecastKey),
@@ -972,20 +984,40 @@ async function loadTypecastVoices() {
     const current = voices.find((v) => v.voice_id === settings.typecastVoice);
     const first = voices.find((v) => v.voice_id === recommended[0]?.voice_id) || voices[0];
     if (!current && first) chooseTypecastVoice(first);
-    setMsg(el.typecastMsg, `목소리 ${voices.length}개를 불러왔어요. 고른 뒤 ‘목소리 들어보기’로 확인해 보세요.`, 'ok');
+    setMsg(el.typecastMsg, voices.length
+      ? `목소리 ${voices.length}개를 불러왔어요. 고른 뒤 ‘목소리 들어보기’로 확인해 보세요.`
+      : '키는 맞지만 쓸 수 있는 목소리가 없어요. Typecast API 콘솔에서 플랜을 확인해 주세요.', voices.length ? 'ok' : 'warn');
   } catch (err) {
     setMsg(el.typecastMsg, err.message, 'error');
+    if (!state.tcVoices.length) showTypecastPlaceholder('목록을 불러오지 못했어요');
+  } finally {
+    tcLoading = false;
   }
 }
 
-el.typecastKey.value = settings.typecastKey;
-el.typecastSave.addEventListener('click', () => {
+function saveTypecastKey() {
   settings.typecastKey = el.typecastKey.value.trim();
   saveSettings();
+  state.tcVoices = [];
+  state.tcRecommended = [];
+  renderTypecastVoices();
   updateCloneButton();
   if (settings.typecastKey) loadTypecastVoices();
   else setMsg(el.typecastMsg, 'Typecast 키를 지웠어요.', 'ok');
-});
+}
+
+// 저장 버튼을 누르지 않아도 키를 넣고 칸을 벗어나면 바로 저장한다.
+function saveWhenChanged(input, current, save) {
+  input.addEventListener('change', () => {
+    if (input.value.trim() !== current()) save();
+  });
+}
+
+el.typecastKey.value = settings.typecastKey;
+el.typecastSave.addEventListener('click', saveTypecastKey);
+saveWhenChanged(el.typecastKey, () => settings.typecastKey, saveTypecastKey);
+saveWhenChanged(el.openaiKey, () => settings.openaiKey, () => el.openaiSave.click());
+renderTypecastVoices();
 el.typecastVoice.addEventListener('change', () => {
   const v = state.tcVoices.find((x) => x.voice_id === el.typecastVoice.value);
   if (v) chooseTypecastVoice(v);
