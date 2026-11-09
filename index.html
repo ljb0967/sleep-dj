@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>잠결 DJ</title>
   <meta name="description" content="유튜브 모음 영상을 들으며 잠들 때, 곡이 바뀔 때마다 제목과 가수를 읽어 줍니다.">
-  <meta name="theme-color" content="#08080b">
+  <meta name="theme-color" content="#121212">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,193 +13,252 @@
   <link rel="apple-touch-icon" href="icon-180.png">
   <link rel="icon" href="icon-192.png" type="image/png">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=20261107d">
-  <script type="module" src="app.js?v=20261107d"></script>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"></noscript>
+  <link rel="stylesheet" href="style.css?v=20261109l">
+  <script type="module" src="app.js?v=20261109l"></script>
 </head>
-<body>
+<body data-stage="empty" data-tab="home" data-seg="saved">
   <div class="app">
     <header class="top">
-      <h1 class="brand">잠결 <span>DJ</span></h1>
-      <button id="menu-btn" class="ghost small" type="button" hidden>메뉴 열기</button>
+      <button id="back-home" class="icon-btn" type="button" aria-label="홈으로"></button>
+      <h1 class="brand">잠결 DJ</h1>
+      <p id="top-title" class="top-title"></p>
     </header>
-
-    <section class="load" aria-label="모음 영상 불러오기">
-      <form id="load-form" class="load-row">
-        <label for="url-input" class="sr-only">유튜브 모음 영상 링크</label>
-        <input id="url-input" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"
-               placeholder="유튜브 모음 영상 링크">
-        <button id="paste-btn" type="button" class="ghost">붙여넣기</button>
-        <button type="submit" class="primary">열기</button>
-      </form>
-      <p id="load-msg" class="msg" role="status"></p>
-    </section>
 
     <section class="stage" aria-label="영상">
       <div class="player-frame">
         <div id="player"></div>
-        <p id="player-empty" class="player-empty"><span>유튜브 앱에서 <b>공유 → 링크 복사</b> 후<br>위에 붙여넣으세요</span></p>
+        <p id="player-empty" class="player-empty">영상을 불러오는 중이에요.</p>
       </div>
-      <p id="video-title" class="video-title" hidden></p>
     </section>
+    <p id="load-msg" class="msg" role="status"></p>
 
-    <section id="pad" class="pad" aria-label="지금 곡">
-      <div class="now" aria-live="polite">
-        <p id="now-label" class="now-label">곡 목록 없음</p>
-        <p id="now-title" class="now-title">모음 영상 링크를 넣어 주세요</p>
-        <p id="now-next" class="now-next"></p>
-      </div>
-      <button id="start-btn" class="start" type="button">재생 시작</button>
-      <button id="tap-area" class="tap-area" type="button" hidden aria-label="지금 곡 이름 다시 듣고 저장하기">
-        <span id="tap-hint" class="tap-hint">이 판 아무 데나 누르면<br>지금 곡 이름을 다시 말하고 저장해요</span>
-      </button>
-      <p id="pad-note" class="msg pad-note" role="status"></p>
-      <p id="timer-note" class="timer-note" hidden></p>
-    </section>
+    <main id="scroller" class="scroller">
+      <section id="pane-home" class="pane" aria-label="홈">
+        <h2 class="guide">오늘 밤 들을 영상을 붙여넣어 주세요</h2>
+        <form id="load-form" class="load-row search">
+          <label for="url-input" class="sr-only">유튜브 모음 영상 링크</label>
+          <input id="url-input" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="유튜브 모음 영상 링크">
+          <button id="paste-btn" type="button" class="ghost">붙여넣기</button>
+          <button type="submit" class="primary">열기</button>
+        </form>
+        <section id="shelf-wrap" class="shelf-wrap" aria-labelledby="shelf-h" hidden>
+          <h2 id="shelf-h" class="shelf-h">최근에 들은 영상</h2>
+          <div id="shelf" class="shelf"></div>
+        </section>
+      </section>
 
-    <section class="block tracks" aria-labelledby="tracks-h">
-      <div class="sec-head">
-        <h2 id="tracks-h">곡 목록</h2>
-        <span id="tracks-meta" class="meta"></span>
-      </div>
-      <p id="tracks-msg" class="msg" role="status"></p>
-      <p id="names-msg" class="msg" role="status"></p>
-      <p id="voice-msg" class="msg" role="status"></p>
-      <ol id="track-list" class="track-list"></ol>
-      <details id="tracks-edit" class="edit">
-        <summary>곡 목록 직접 넣기 · 고치기</summary>
-        <p class="help">영상 설명란이나 댓글의 시간표를 그대로 붙여넣으세요. 시각이 없는 줄은 건너뜁니다.</p>
-        <label for="tracks-input" class="sr-only">시간표</label>
-        <textarea id="tracks-input" rows="8" spellcheck="false"
-                  placeholder="00:00 아이유 - 밤편지&#10;04:13 폴킴 - 모든 날, 모든 순간&#10;08:05 백예린 - 그건 아마 우리의 잘못은 아닐 거야"></textarea>
-        <button id="tracks-apply" class="primary" type="button">목록 적용</button>
-      </details>
-    </section>
+      <section id="pane-play" class="pane" aria-label="지금 재생">
+        <section id="pad" class="pad" aria-label="지금 곡">
+          <div class="dial" aria-hidden="true"><i></i></div>
+          <div class="now" aria-live="polite">
+            <p id="now-label" class="now-label">곡 목록 없음</p>
+            <p id="now-title" class="now-title">모음 영상 링크를 넣어 주세요</p>
+            <p id="now-artist" class="now-artist"></p>
+            <p id="now-next" class="now-next"></p>
+          </div>
+          <button id="save-now" class="save-now" type="button" aria-pressed="false" aria-label="지금 곡 저장하기" hidden></button>
+          <button id="tap-area" class="tap-area" type="button" hidden aria-label="지금 곡 이름 다시 듣고 저장하기">
+            <span id="tap-hint" class="tap-hint">누르면 곡 이름을 다시 듣고 저장해요</span>
+          </button>
+          <p id="pad-note" class="msg pad-note" role="status"></p>
+          <p id="timer-note" class="timer-note" hidden></p>
+        </section>
 
-    <section class="block saved" aria-labelledby="saved-h">
-      <div class="sec-head">
-        <h2 id="saved-h">저장한 노래</h2>
-        <button id="copy-saved" class="ghost small" type="button" hidden>목록 복사</button>
-      </div>
-      <p id="saved-msg" class="msg" role="status"></p>
-      <p id="saved-empty" class="empty">들으면서 판을 누른 곡이 여기에 모여요.</p>
-      <ul id="saved-list" class="song-list"></ul>
-    </section>
-
-    <section class="block history" aria-labelledby="history-h">
-      <div class="sec-head">
-        <h2 id="history-h">들은 기록</h2>
-      </div>
-      <p id="history-empty" class="empty">곡이 바뀔 때마다 밤별로 기록돼요. 못 누르고 잠들었어도 아침에 여기서 찾거나 ☆로 저장할 수 있어요.</p>
-      <div id="history-list"></div>
-    </section>
-
-    <details id="settings" class="block settings">
-      <summary><h2>설정</h2></summary>
-      <fieldset>
-        <legend>곡 소개</legend>
-        <label class="choice"><input id="dj" type="checkbox"> 라디오 DJ처럼 소개하기 <small>“오늘 유난히 길었다는 분이 신청하셨어요. 아이유의 밤편지입니다.”처럼 말해요</small></label>
-      </fieldset>
-      <div id="dj-field" class="field" hidden>
-        <p class="help">OpenAI 키가 있으면 곡 목록에 맞춰 멘트를 새로 쓰고, 없으면 준비된 멘트를 돌려 써요. 사연은 분위기를 위해 지어낸 것이고, 곡에 대한 사실은 말하지 않게 했어요. 가수와 제목은 곡 목록 글자 그대로 읽어요.</p>
-        <button id="dj-rewrite" class="ghost" type="button">멘트 다시 쓰기</button>
-        <p id="dj-msg" class="msg" role="status"></p>
-      </div>
-      <fieldset>
-        <legend>곡 이름을 말할 때</legend>
-        <label class="choice"><input type="radio" name="mode" value="pause" id="mode-pause"> 음악을 잠깐 멈추고 말하기 <small>잘 들림 · 곡 처음으로 되돌려 이어 재생</small></label>
-        <label class="choice"><input type="radio" name="mode" value="over" id="mode-over"> 음악 위에 말하기 <small>음악이 끊기지 않음</small></label>
-      </fieldset>
-      <fieldset>
-        <legend>목소리</legend>
-        <label class="choice"><input type="radio" name="engine" value="device" id="engine-device"> 기기 기본 목소리 <small>무료 · 아이폰에서는 영상이 재생된 뒤 소리가 안 나는 경우가 있어요</small></label>
-        <label class="choice"><input type="radio" name="engine" value="typecast" id="engine-typecast"> Typecast 한국어 목소리 · 내 목소리 <small>자연스러운 한국어 성우 목소리 · 무료 플랜 있음 · 내 목소리는 유료 API 플랜 필요</small></label>
-        <label class="choice"><input type="radio" name="engine" value="openai" id="engine-openai"> OpenAI 목소리 <small>음성 파일로 재생해서 아이폰에서 더 확실해요 · OpenAI API 키 필요 · 사용료가 조금 들어요</small></label>
-      </fieldset>
-      <div id="device-voice-field" class="field">
-        <label for="voice-select">기기 목소리 종류</label>
-        <select id="voice-select"><option value="">자동 (추천)</option></select>
-        <p class="help">아이폰에서는 종류를 직접 고르면 소리가 안 나거나 다른 목소리가 나올 수 있어요. 문제가 있으면 ‘자동’으로 두세요.</p>
-      </div>
-      <div id="typecast-field" class="field" hidden>
-        <label for="typecast-key">Typecast API 키</label>
-        <p class="help">typecast.ai의 API 콘솔에서 발급받아요. 키를 넣고 저장하면 목소리 목록이 나와요. 키는 이 기기에 보관하고, 음성을 만들 때만 Typecast로 보내요. 한 번 만든 음성은 기기에 저장해 다시 쓰므로, 영상마다 처음 한 번만 크레딧이 들어요.</p>
-        <div class="load-row">
-          <input id="typecast-key" type="password" autocomplete="off" spellcheck="false" placeholder="API 키">
-          <button id="typecast-save" class="ghost" type="button">저장</button>
+        <div class="progress">
+          <div class="prog-track"><i id="prog-fill"></i></div>
+          <span id="prog-cur" class="prog-time">0:00</span>
+          <span id="prog-end" class="prog-time">0:00</span>
         </div>
-        <p id="typecast-msg" class="msg" role="status"></p>
-        <label for="typecast-voice">목소리 종류</label>
-        <select id="typecast-voice"></select>
-        <details id="my-voice" class="diag">
-          <summary>내 목소리 만들기</summary>
-          <p class="help">본인 목소리만 등록해 주세요. Typecast 유료 API 플랜이 필요해요. 1분쯤 아래 글을 잠들기 전 말투로 읽으면, 그 말투로 곡을 소개해 줘요. 조용한 곳에서 녹음할수록 좋아요.</p>
-          <p id="reading-script" class="reading-script"></p>
-          <button id="record-btn" class="primary" type="button">녹음 시작</button>
-          <label for="voice-file" class="file-label">또는 음성 메모 파일 고르기 (5초~150초)</label>
-          <input id="voice-file" type="file" accept="audio/*">
-          <audio id="voice-preview" controls hidden></audio>
-          <label for="clone-name" class="file-label">목소리 이름</label>
-          <input id="clone-name" class="text-input" type="text" maxlength="30" value="내 목소리" autocomplete="off">
-          <label class="choice"><input id="clone-consent" type="checkbox"> 이 음성은 제 목소리이고, 복제 목소리를 만드는 데 동의해요</label>
-          <button id="clone-btn" class="primary" type="button" disabled>내 목소리 만들기</button>
-          <p id="clone-msg" class="msg" role="status"></p>
+        <div class="transport">
+          <button id="tr-prev" class="tr tr-prev" type="button" aria-label="이전 곡"></button>
+          <button id="tr-toggle" class="tr tr-toggle" type="button" data-playing="false" aria-label="재생 또는 멈춤"></button>
+          <button id="tr-next" class="tr tr-next" type="button" aria-label="다음 곡"></button>
+        </div>
+
+        <div id="pl-head" class="pl-head">
+          <div class="pl-bg" aria-hidden="true"></div>
+          <p id="video-title" class="video-title" hidden></p>
+          <div class="pl-meta">
+            <span id="tracks-meta" class="meta"></span>
+            <label for="sleep-timer" class="sr-only">취침 타이머</label>
+            <select id="sleep-timer" class="chip-select">
+              <option value="0">타이머 끄기</option>
+              <option value="30">30분</option>
+              <option value="45">45분</option>
+              <option value="60">1시간</option>
+              <option value="90">1시간 30분</option>
+              <option value="120">2시간</option>
+            </select>
+          </div>
+        </div>
+
+        <section class="tracks" aria-labelledby="tracks-h">
+          <div class="sec-head">
+            <h2 id="tracks-h">곡 목록</h2>
+          </div>
+          <p id="tracks-msg" class="msg" role="status"></p>
+          <ol id="track-list" class="track-list"></ol>
+          <p id="names-msg" class="msg" role="status"></p>
+          <p id="voice-msg" class="msg" role="status"></p>
+          <details id="tracks-edit" class="edit">
+            <summary>시간표 직접 넣기</summary>
+            <p class="help">영상 설명이나 댓글의 시간표를 붙여넣으세요. 시각 없는 줄은 건너뛰어요.</p>
+            <label for="tracks-input" class="sr-only">시간표</label>
+            <textarea id="tracks-input" rows="8" spellcheck="false"
+                      placeholder="00:00 아이유 - 밤편지&#10;04:13 폴킴 - 모든 날, 모든 순간&#10;08:05 백예린 - 그건 아마 우리의 잘못은 아닐 거야"></textarea>
+            <button id="tracks-apply" class="primary" type="button">목록 적용</button>
+          </details>
+          <p class="dock-note">잠들기 전에 화면 밝기를 가장 낮게 두세요.</p>
+        </section>
+
+        <div id="rescue" class="rescue">
+          <button id="rescue-test" class="ghost" type="button">목소리 들어보기</button>
+          <button id="diag-open" class="ghost" type="button">음성 진단</button>
+        </div>
+      </section>
+
+      <section id="pane-lib" class="pane" aria-label="보관함">
+        <h2 class="page-title">보관함</h2>
+        <div class="seg" role="group" aria-label="보관함 보기">
+          <button class="seg-btn" type="button" data-seg="saved">저장한 노래</button>
+          <button class="seg-btn" type="button" data-seg="history">들은 기록</button>
+        </div>
+
+        <section class="saved" aria-labelledby="saved-h">
+          <div class="sec-head">
+            <h2 id="saved-h" class="sr-only">저장한 노래</h2>
+            <button id="copy-saved" class="ghost small" type="button" hidden>목록 복사</button>
+          </div>
+          <p id="saved-msg" class="msg" role="status"></p>
+          <p id="saved-empty" class="empty">판을 누른 곡이 여기에 모여요.</p>
+          <ul id="saved-list" class="song-list"></ul>
+        </section>
+
+        <section class="history" aria-labelledby="history-h">
+          <h2 id="history-h" class="sr-only">들은 기록</h2>
+          <p id="history-empty" class="empty">곡이 바뀔 때마다 밤별로 쌓여요. 아침에 여기서 찾거나 저장하세요.</p>
+          <div id="history-list"></div>
+        </section>
+      </section>
+
+      <section id="settings" class="pane settings" aria-label="설정">
+        <h2 class="page-title">설정</h2>
+
+        <fieldset>
+          <legend>곡 소개</legend>
+          <label class="choice"><input id="dj" type="checkbox"> 라디오 DJ처럼 소개하기 <small>“아이유의 밤편지입니다.”에 사연을 얹어요</small></label>
+        </fieldset>
+        <div id="dj-field" class="field" hidden>
+          <p class="help">OpenAI 키가 있으면 멘트를 새로 쓰고, 없으면 준비된 멘트를 써요. 가수와 제목은 목록 그대로 읽어요.</p>
+          <button id="dj-rewrite" class="ghost" type="button">멘트 다시 쓰기</button>
+          <p id="dj-msg" class="msg" role="status"></p>
+        </div>
+
+        <fieldset>
+          <legend>곡 이름을 말할 때</legend>
+          <label class="choice"><input type="radio" name="mode" value="pause" id="mode-pause"> 음악을 잠깐 멈추고 말하기 <small>잘 들려요. 곡 처음으로 되돌려 이어 틀어요</small></label>
+          <label class="choice"><input type="radio" name="mode" value="over" id="mode-over"> 음악 위에 말하기 <small>음악이 끊기지 않아요</small></label>
+        </fieldset>
+        <label id="prefix-row" class="choice"><input id="prefix" type="checkbox"> 곡 이름 앞에 “다음 곡”이라고 말하기</label>
+        <div class="field">
+          <label for="rate">말 빠르기 <output id="rate-out" for="rate">1.0배</output></label>
+          <input id="rate" type="range" min="0.6" max="1.4" step="0.1" value="1">
+        </div>
+
+        <fieldset>
+          <legend>목소리</legend>
+          <label class="choice"><input type="radio" name="engine" value="device" id="engine-device"> 기기 기본 목소리 <small>무료. 아이폰에서는 영상이 켜진 뒤 소리가 안 날 수 있어요</small></label>
+          <label class="choice"><input type="radio" name="engine" value="typecast" id="engine-typecast"> Typecast 한국어 목소리 <small>내 목소리는 유료 API 플랜이 필요해요</small></label>
+          <label class="choice"><input type="radio" name="engine" value="openai" id="engine-openai"> OpenAI 목소리 <small>음성 파일로 틀어서 아이폰에서 확실해요. API 키와 사용료가 들어요</small></label>
+        </fieldset>
+        <div id="device-voice-field" class="field">
+          <label for="voice-select">기기 목소리 종류</label>
+          <select id="voice-select"><option value="">자동 (추천)</option></select>
+          <p class="help">아이폰에서는 직접 고르면 소리가 안 날 수 있어요. 문제가 있으면 자동으로 두세요.</p>
+        </div>
+        <div id="typecast-field" class="field" hidden>
+          <label for="typecast-key">Typecast API 키</label>
+          <p class="help">typecast.ai 콘솔에서 발급받아요. 키는 이 기기에만 두고, 한 번 만든 음성은 저장해 다시 써요.</p>
+          <div class="load-row">
+            <input id="typecast-key" type="password" autocomplete="off" spellcheck="false" placeholder="API 키">
+            <button id="typecast-save" class="ghost" type="button">저장</button>
+          </div>
+          <p id="typecast-msg" class="msg" role="status"></p>
+          <label for="typecast-voice">목소리 종류</label>
+          <select id="typecast-voice"></select>
+          <details id="my-voice" class="diag">
+            <summary>내 목소리 만들기</summary>
+            <p class="help">본인 목소리만 등록하세요. 아래 글을 잠들기 전 말투로 1분쯤 읽으면 돼요.</p>
+            <p id="reading-script" class="reading-script"></p>
+            <button id="record-btn" class="primary" type="button">녹음 시작</button>
+            <label for="voice-file" class="file-label">또는 음성 메모 파일 (5초~150초)</label>
+            <input id="voice-file" type="file" accept="audio/*">
+            <audio id="voice-preview" controls hidden></audio>
+            <label for="clone-name" class="file-label">목소리 이름</label>
+            <input id="clone-name" class="text-input" type="text" maxlength="30" value="내 목소리" autocomplete="off">
+            <label class="choice"><input id="clone-consent" type="checkbox"> 제 목소리이고, 복제에 동의해요</label>
+            <button id="clone-btn" class="primary" type="button" disabled>내 목소리 만들기</button>
+            <p id="clone-msg" class="msg" role="status"></p>
+          </details>
+        </div>
+        <div id="openai-field" class="field">
+          <label for="openai-key">OpenAI API 키 <small>(선택)</small></label>
+          <p class="help">있으면 영어 이름을 한글 발음으로 읽고 DJ 멘트도 써요. 키는 이 기기에만 두고, 한도를 낮게 정한 키를 권해요.</p>
+          <div class="load-row">
+            <input id="openai-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+            <button id="openai-save" class="ghost" type="button">저장</button>
+          </div>
+          <p id="openai-msg" class="msg" role="status"></p>
+          <div id="openai-voice-row" class="field">
+            <label for="openai-voice">목소리 종류</label>
+            <select id="openai-voice"></select>
+          </div>
+        </div>
+        <button id="test-voice" class="ghost" type="button">목소리 들어보기</button>
+
+        <div class="field">
+          <label for="api-key">YouTube Data API 키 <small>(선택)</small></label>
+          <p class="help">있으면 설명란과 주인 댓글에서 곡 목록을 자동으로 찾아요. 키는 이 기기에만 둬요.</p>
+          <div class="load-row">
+            <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
+            <button id="api-save" class="ghost" type="button">저장</button>
+          </div>
+          <p id="api-msg" class="msg" role="status"></p>
+        </div>
+
+        <details id="diag" class="diag">
+          <summary>음성 진단</summary>
+          <p class="help">소리가 안 나면 한 번 틀어 본 뒤 ‘진단 내용 복사’를 눌러 보내 주세요.</p>
+          <pre id="diag-text" class="diag-text"></pre>
+          <button id="diag-copy" class="ghost small" type="button">진단 내용 복사</button>
         </details>
-      </div>
-      <div id="openai-field" class="field">
-        <label for="openai-key">OpenAI API 키 <small>(선택)</small></label>
-        <p class="help">넣어 두면 “babymonster_deserve”를 “베이비몬스터의 디저브”처럼 한글 발음으로 읽고, DJ 멘트도 곡에 맞춰 써요. 없으면 영어 이름은 영어 그대로 읽어요. 키는 이 기기에 보관하고 이때만 OpenAI로 보내요. 영상마다 처음 한 번만 비용이 들고, 사용 한도를 낮게 정한 키를 쓰는 걸 권해요.</p>
-        <div class="load-row">
-          <input id="openai-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
-          <button id="openai-save" class="ghost" type="button">저장</button>
-        </div>
-        <p id="openai-msg" class="msg" role="status"></p>
-        <div id="openai-voice-row" class="field">
-          <label for="openai-voice">목소리 종류</label>
-          <select id="openai-voice"></select>
-        </div>
-      </div>
-      <div class="field">
-        <label for="rate">말 빠르기 <output id="rate-out" for="rate">1.0배</output></label>
-        <input id="rate" type="range" min="0.6" max="1.4" step="0.1" value="1">
-      </div>
-      <label id="prefix-row" class="choice"><input id="prefix" type="checkbox"> 곡 이름 앞에 “다음 곡”이라고 말하기</label>
-      <button id="test-voice" class="ghost" type="button">목소리 들어보기</button>
+        <footer class="foot">곡 목록, 저장한 노래, 기록은 이 기기의 이 브라우저에만 저장돼요.</footer>
+      </section>
+    </main>
 
-      <div class="field">
-        <label for="sleep-timer">취침 타이머</label>
-        <select id="sleep-timer">
-          <option value="0">끄기</option>
-          <option value="30">30분 뒤 멈춤</option>
-          <option value="45">45분 뒤 멈춤</option>
-          <option value="60">1시간 뒤 멈춤</option>
-          <option value="90">1시간 30분 뒤 멈춤</option>
-          <option value="120">2시간 뒤 멈춤</option>
-        </select>
-        <p class="help">정한 시간이 지나면 음악을 멈추고 화면 켜두기를 풀어서 폰이 잠들 수 있게 해요.</p>
-      </div>
+    <div id="mini" class="mini">
+      <button id="mini-open" class="mini-open" type="button" aria-label="지금 재생 화면 열기">
+        <img id="mini-thumb" class="mini-thumb" alt="">
+        <span class="mini-text">
+          <span id="mini-title" class="mini-title">재생할 영상</span>
+          <span id="mini-sub" class="mini-sub"></span>
+        </span>
+      </button>
+      <button id="start-btn" class="mini-play start" type="button">재생 시작</button>
+      <button id="mini-toggle" class="mini-play" type="button" data-playing="false" aria-label="재생 또는 멈춤"></button>
+    </div>
 
-      <div class="field">
-        <label for="api-key">YouTube Data API 키 <small>(선택)</small></label>
-        <p class="help">넣어 두면 영상을 열 때 설명란과 영상 주인이 쓴 댓글에서 곡 목록을 자동으로 찾아요. 키는 이 기기에 보관하고, 곡 목록을 찾을 때만 Google로 보내요.</p>
-        <div class="load-row">
-          <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
-          <button id="api-save" class="ghost" type="button">저장</button>
-        </div>
-        <p id="api-msg" class="msg" role="status"></p>
-      </div>
+    <button id="menu-btn" class="sleep-btn" type="button" hidden>메뉴 열기</button>
 
-      <details id="diag" class="diag">
-        <summary>음성 진단</summary>
-        <p class="help">목소리가 안 나오면 재생해 본 뒤 여기를 열고 ‘진단 내용 복사’를 눌러 보내 주세요. 무엇을 언제 말하려 했고 어떻게 됐는지 적혀 있어요.</p>
-        <pre id="diag-text" class="diag-text"></pre>
-        <button id="diag-copy" class="ghost small" type="button">진단 내용 복사</button>
-      </details>
-    </details>
-
-    <footer class="foot">곡 목록, 저장한 노래, 기록은 이 기기의 이 브라우저에만 저장돼요.</footer>
+    <nav id="tabbar" class="tabbar" aria-label="화면 이동">
+      <button class="tab" type="button" data-go="play"><i class="ti ti-play" aria-hidden="true"></i><span>재생</span></button>
+      <button class="tab" type="button" data-go="lib"><i class="ti ti-lib" aria-hidden="true"></i><span>보관함</span></button>
+      <button class="tab" type="button" data-go="set"><i class="ti ti-set" aria-hidden="true"></i><span>설정</span></button>
+    </nav>
   </div>
 </body>
 </html>

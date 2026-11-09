@@ -2,7 +2,7 @@
 // AI는 멘트와 읽는 법만 주고, 곡 이름 자리는 앱이 채운다. 이 앱의 목적이 곡 이름을 정확히 아는 것이라,
 // 한글 이름은 곡 목록 글자와 맞을 때만 쓰고, 화면과 저장 목록에는 원래 글자를 그대로 둔다.
 // DOM이나 네트워크에 의존하지 않는 순수 함수만 둔다.
-import { toSpeech, speakPiece } from './tracklist.js?v=20261107d';
+import { toSpeech, speakPiece, splitSong } from './tracklist.js?v=20261109l';
 
 export const DJ_MODEL = 'gpt-6.1-sol';
 export const SLOT = '{곡}';
@@ -187,6 +187,16 @@ export function songName(track, entry, style = 0) {
 export function songSentence(track, entry, style = 0) {
   const name = songName(track, entry, style);
   return songParts(track, entry) ? `${name}입니다.` : `${name}.`;
+}
+
+/**
+ * 화면에 보일 가수와 제목 { artist, title }. 말로 읽는 이름(say_*)은 쓰지 않고 곡 목록의 원래 글자를 둔다.
+ * AI가 나눈 값이 곡 목록 글자와 맞으면 그것을, 아니면 구분자로 나누고 (앞이 가수), 나눌 수 없으면 가수 없이 전체를 제목으로 한다.
+ */
+export function songDisplay(track, entry) {
+  if (knowsArtist(track, entry)) return { artist: entry.artist.trim(), title: entry.title.trim() };
+  const parts = splitSong(track.text);
+  return parts ? { artist: parts[0], title: parts[1] } : { artist: '', title: track.text };
 }
 
 /** i번째 곡의 DJ 멘트 완성문. 대본이 없거나 규칙을 어겼으면 준비된 멘트를 쓴다. */

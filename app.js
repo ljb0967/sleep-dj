@@ -1,13 +1,13 @@
 import {
   parseTracklist, pickTracklist, toSpeech, extractVideoId, indexAt, formatTime, tracksToText,
-} from './tracklist.js?v=20261107d';
-import { createVoice, PHRASES, OPENAI_VOICES } from './voice.js?v=20261107d';
+} from './tracklist.js?v=20261109l';
+import { createVoice, PHRASES, OPENAI_VOICES } from './voice.js?v=20261109l';
 import {
-  buildDjRequest, responseText, parseDjScript, trackSignature, isValidIntro, djLine, djOpening, songSentence,
-} from './dj.js?v=20261107d';
+  buildDjRequest, responseText, parseDjScript, trackSignature, isValidIntro, djLine, djOpening, songSentence, songDisplay,
+} from './dj.js?v=20261109l';
 import {
   listVoices, recommendVoices, voiceSettings, voiceLabel, createClone, toCloneWav, startRecording, READING_SCRIPT,
-} from './typecast.js?v=20261107d';
+} from './typecast.js?v=20261109l';
 
 const $ = (sel) => document.querySelector(sel);
 const PLAYING = 1;
@@ -70,7 +70,18 @@ const state = {
   recorder: null,       // 내 목소리 녹음 중
   recordTimer: null,
   cloneWav: null,       // 등록할 내 목소리 WAV
+  timerSpeaking: false, // 취침 타이머 안내를 말하는 중 (이 동안 재생 신호로 타이머 상태를 풀지 않는다)
+  playerError: null,    // 유튜브가 알린 재생 오류 문구 (영상을 새로 열면 지운다)
+  startFrom: null,      // 시작 전에 곡 목록에서 고른 곡의 시각(초)
+  timerFiredAt: -1e9,   // 취침 타이머가 발동한 시각 (performance.now). 직후의 재생 신호는 재개 전환의 잔여다
+  resumedAt: -1e9,      // 곡 안내 뒤 자동 재개를 부른 시각 (performance.now). 이 직후의 튀는 PAUSED를 사용자 멈춤으로 보지 않는다.
+  needsVoiceStart: false, // 영상의 재생 버튼으로 시작해서 목소리가 아직 안 켜졌음 → 판 한 번으로 켠다
 };
+
+// 판 아래에 보여 주는 안내 문구. 같은 문구일 때만 지우려고 상수로 둔다.
+const NOTE_PAUSED = '멈춰 있어요. 판을 한 번 누르면 다시 틀어요.';
+const NOTE_VOICE_FAILED = '목소리가 나오지 않았어요. 판을 누르면 다시 말해요.';
+const NOTE_VOICE_OFF = '판을 한 번 누르면 목소리가 켜져요.';
 
 const playerStateName = () => STATE_NAMES[state.player?.getPlayerState?.()] ?? '없음';
 const voice = createVoice({ getSettings: () => settings, getPlayerState: playerStateName });
@@ -98,7 +109,16 @@ const el = {
   voicePreview: $('#voice-preview'), cloneName: $('#clone-name'), cloneConsent: $('#clone-consent'),
   cloneBtn: $('#clone-btn'), cloneMsg: $('#clone-msg'),
   dj: $('#dj'), djField: $('#dj-field'), djRewrite: $('#dj-rewrite'), djMsg: $('#dj-msg'), prefixRow: $('#prefix-row'),
-  settingsBox: $('#settings'), sleepTimer: $('#sleep-timer'),
+  sleepTimer: $('#sleep-timer'),
+  backHome: $('#back-home'), topTitle: $('#top-title'), scroller: $('#scroller'),
+  nowArtist: $('#now-artist'), saveNow: $('#save-now'), tracksH: $('#tracks-h'), plHead: $('#pl-head'),
+  shelfWrap: $('#shelf-wrap'), shelf: $('#shelf'),
+  progFill: $('#prog-fill'), progCur: $('#prog-cur'), progEnd: $('#prog-end'),
+  trPrev: $('#tr-prev'), trToggle: $('#tr-toggle'), trNext: $('#tr-next'),
+  mini: $('#mini'), miniOpen: $('#mini-open'), miniThumb: $('#mini-thumb'), miniTitle: $('#mini-title'),
+  miniSub: $('#mini-sub'), miniToggle: $('#mini-toggle'),
+  tabs: document.querySelectorAll('.tab'), segBtns: document.querySelectorAll('.seg-btn'),
+  rescueTest: $('#rescue-test'), diagOpen: $('#diag-open'), // 새 화면 요소: 없어도 앱은 동작한다
   apiKey: $('#api-key'), apiSave: $('#api-save'), apiMsg: $('#api-msg'),
   diag: $('#diag'), diagText: $('#diag-text'), diagCopy: $('#diag-copy'),
 };
@@ -106,6 +126,11 @@ const el = {
 function setMsg(node, text, kind = '') {
   node.textContent = text;
   node.dataset.kind = kind;
+}
+
+/** 판 아래 안내가 지금 이 문구일 때만 지운다 (다른 안내를 덮어 지우지 않게). */
+function clearPadNote(text) {
+  if (el.padNote.textContent === text) setMsg(el.padNote, '');
 }
 
 /**
@@ -124,7 +149,12 @@ async function sayOverMusic(parts, resumeAt = null, { interrupt = false } = {}) 
   // 곡 안내는 앞말("시작할게요" 등)이 끝나길 기다리고, 화면을 눌러 요청한 말은 바로 끊고 말한다.
   // (누른 순간에 말을 시작해야 아이폰에서 소리가 나므로 interrupt일 때는 기다리지 않는다.)
   if (!interrupt) await voice.idle();
-  await voice.say(parts);
+  const ok = await voice.say(parts);
+  if (ok) clearPadNote(NOTE_VOICE_FAILED);
+  else if (!voice.speaking && state.started && !state.needsVoiceStart && !el.padNote.textContent) {
+    // speaking이 참이면 새 말에 끊긴 것이라 실패가 아니다. 다른 안내가 떠 있으면 덮지 않는다.
+    setMsg(el.padNote, NOTE_VOICE_FAILED, 'warn');
+  }
   await voice.idle(); // 그 사이 화면을 눌러 끼어든 말까지 끝난 뒤에 음악을 튼다
   if (!pause) return;
   if (session !== state.session) {
@@ -133,6 +163,7 @@ async function sayOverMusic(parts, resumeAt = null, { interrupt = false } = {}) 
   }
   if (resumeAt != null) p.seekTo(resumeAt, true);
   state.resumeOk = false;
+  state.resumedAt = performance.now();
   p.playVideo();
   state.lastT = resumeAt ?? p.getCurrentTime();
   state.busy = false;
@@ -154,7 +185,7 @@ function checkResumed(session, attempt = 1) {
     }
     state.resumeBlocked = true;
     state.needsTapToResume = true;
-    setMsg(el.padNote, '말한 뒤 음악을 자동으로 다시 틀지 못했어요. 이 판을 한 번 누르면 다시 틀어요. 앞으로는 음악을 멈추지 않고 말할게요.', 'warn');
+    setMsg(el.padNote, '음악이 멈췄어요. 판을 한 번 누르면 다시 틀어요. 앞으로는 음악을 멈추지 않고 말할게요.', 'warn');
     voice.say([PHRASES.stalled]);
   }, 2500);
 }
@@ -234,13 +265,33 @@ async function ensurePlayer(videoId) {
 
 function onStateChange(e) {
   if (e.data === PLAYING) {
+    // 타이머가 막 끝났는데 안내 뒤 재개 전환이 뒤늦게 PLAYING이 되면 음악이 돌아오지 않게 다시 멈춘다.
+    if (state.sleepTimerFired && !state.timerSpeaking && performance.now() - state.timerFiredAt < 8000) {
+      state.player?.pauseVideo?.();
+      return;
+    }
     state.resumeOk = true;
     state.needsTapToResume = false;
+    clearPadNote(NOTE_PAUSED);
+    // 타이머 뒤 음악을 다시 틀었거나 일시적 오류 뒤 재생이 돌아오면 그 상태를 푼다. (타이머 안내를 말하는 중에는 둔다.)
+    if (state.sleepTimerFired && !state.timerSpeaking) {
+      state.sleepTimerFired = false;
+      clearPadNote('취침 타이머로 멈췄어요.');
+    }
+    if (state.playerError) {
+      clearPadNote(state.playerError);
+      state.playerError = null;
+      renderNow();
+    }
     if (!state.started) beginSession(false);
     holdScreen();
     fillVideoTitle();
   } else if (e.data === PAUSED) {
-    if (!state.busy) releaseScreen(); // 사용자가 멈춤 → 화면이 꺼질 수 있게
+    if (!state.busy) {
+      releaseScreen(); // 사용자가 멈춤 → 화면이 꺼질 수 있게
+      // 눈을 감고 있어도 판 한 번으로 다시 틀 수 있다는 것을 화면에 남긴다. (타이머로 멈춘 경우는 그 안내를 둔다.)
+      if (state.started && !state.sleepTimerFired && !state.playerError) setMsg(el.padNote, NOTE_PAUSED, 'warn');
+    }
   } else if (e.data === ENDED) {
     releaseScreen();
     setMsg(el.padNote, '영상이 끝났어요. 이제 화면이 꺼질 수 있어요.', '');
@@ -259,7 +310,10 @@ function onError(e) {
     150: '이 영상은 올린 사람이 다른 사이트에서 재생하지 못하게 막아 두었어요. 다른 모음 영상을 써 주세요.',
     153: '유튜브가 재생을 거부했어요. 주소창에서 이 페이지를 직접 열었는지 확인해 주세요.',
   }[e.data] || `재생 오류가 났어요 (코드 ${e.data}).`;
-  setMsg(el.loadMsg, msg, 'error');
+  state.playerError = msg;
+  // 잠자기 화면에서는 영상 위 메시지 칸이 숨겨져 있으므로 판 아래에 보여 준다.
+  setMsg(state.started ? el.padNote : el.loadMsg, msg, 'error');
+  renderNow();
 }
 
 function fillVideoTitle() {
@@ -276,7 +330,9 @@ function fillVideoTitle() {
 function tick() {
   const p = state.player;
   if (!p || !state.playerReady || state.busy || !p.getPlayerState) return;
+  if (!state.started) return; // 시작 전·다른 영상을 여는 중의 재생 시각을 곡 목록에 대입하지 않는다
   checkSleepTimer();
+  if (state.sleepTimerFired) return; // 타이머 안내 중에 곡 안내가 끼어 음악을 다시 틀지 않게
   const st = p.getPlayerState();
   const t = p.getCurrentTime() || 0;
   if (st !== PLAYING) {
@@ -327,15 +383,29 @@ function checkSleepTimer() {
   if (!state.sleepAt || state.sleepTimerFired) return;
   renderTimer();
   if (Date.now() < state.sleepAt) return;
-  state.sleepTimerFired = true;
-  state.sleepAt = 0;
   const p = state.player;
-  if (p?.getPlayerState?.() === PLAYING) {
+  const st = p?.getPlayerState?.();
+  // 음악이 나오는 중이 아니면 상태를 먼저 본다. 곡 안내 직후의 재생 전환 중(BUFFERING, CUED,
+  // 자동 재개를 기다리는 PAUSED)이면 타이머를 지우지 말고 다음 tick으로 미룬다.
+  // 미룸은 최대 1분이다. 자동 재개가 막혀 needsTapToResume가 되면 음악이 안 나오는 상태라 바로 끝낸다.
+  const userStopped = st === ENDED || (st === PAUSED && (state.needsTapToResume || (state.resumeOk && performance.now() - state.resumedAt > 6000)));
+  // 자동 재개 직후 6초 안의 PAUSED는 플레이어가 튀는 것일 수 있어 사용자 멈춤으로 보지 않고 아래 미룸으로 간다.
+  if (st !== PLAYING && !userStopped) {
+    if (Date.now() < state.sleepAt + 60000) return;
+    try { p?.pauseVideo?.(); } catch { /* 무시 */ } // 끝내 재생이 안 잡히면 멈춘 채로 끝낸다
+  }
+  state.sleepTimerFired = true;
+  state.timerFiredAt = performance.now();
+  state.sleepAt = 0;
+  if (st === PLAYING) {
+    state.timerSpeaking = true;
     voice.say([PHRASES.timer]).then(() => {
+      state.timerSpeaking = false;
       p.pauseVideo();
       releaseScreen();
     });
   } else {
+    try { p?.pauseVideo?.(); } catch { /* 무시 */ } // 재개 전환이 뒤늦게 PLAYING이 되어도 음악이 돌아오지 않게 한다
     releaseScreen();
   }
   setMsg(el.padNote, '취침 타이머로 멈췄어요.', '');
@@ -358,22 +428,38 @@ function renderTimer() {
 // ── 시작 / 잠자기 화면 / 메뉴 ──────────────────────────────────────────────
 function beginSession(fromButton) {
   state.started = true;
+  state.startFrom = null;
   document.body.classList.add('sleeping');
+  document.body.classList.remove('morning');
   window.scrollTo(0, 0);
+  setTab('play');
   el.menu.hidden = false;
+  el.menu.textContent = '메뉴 열기';
+  disarmMenu();
   el.start.hidden = true;
   el.tap.hidden = false;
   if (!fromButton) {
+    // 영상의 재생 버튼으로 시작한 경우: 목소리는 아직 켜지지 않았다. 판 한 번으로 켠다.
+    state.needsVoiceStart = true;
     armSleepTimer();
-    setMsg(el.padNote, '아이폰에서는 ‘재생 시작’ 버튼으로 시작해야 목소리가 나와요. ‘메뉴 열기’ → ‘다시 시작’을 눌러 주세요.', 'warn');
+    if (state.tracks.length) setMsg(el.padNote, NOTE_VOICE_OFF, 'warn');
   }
+  renderPicked();
   renderNow();
 }
 
 function startListening() {
   if (!state.playerReady) {
-    setMsg(el.loadMsg, '먼저 위에 모음 영상 링크를 넣어 주세요.', 'warn');
-    el.url.focus();
+    if (state.videoId) {
+      setMsg(el.loadMsg, '영상을 불러오는 중이에요. 잠시 뒤 다시 눌러 주세요.', '');
+    } else {
+      setMsg(el.loadMsg, '먼저 위에 모음 영상 링크를 넣어 주세요.', 'warn');
+      el.url.focus();
+    }
+    return;
+  }
+  if (state.playerError) {
+    setMsg(el.loadMsg, state.playerError, 'error');
     return;
   }
   if (!state.tracks.length) {
@@ -383,12 +469,15 @@ function startListening() {
     return;
   }
   // 아이폰은 버튼을 누른 그 순간에 소리를 내야 이후에도 소리를 낼 수 있다.
-  const again = state.started;
+  // (영상의 재생 버튼으로 시작했다가 판을 눌러 목소리를 켜는 경우는 '다시 시작'이 아니라 첫 시작이다.)
+  const again = state.started && !state.needsVoiceStart;
   voice.unlock();
   const greeting = settings.dj ? djOpening(state.djScript) : PHRASES.start;
   voice.say([again ? PHRASES.restart : greeting]);
   state.resumeBlocked = false;
   state.needsTapToResume = false;
+  state.needsVoiceStart = false;
+  if (state.startFrom != null) state.player.seekTo(state.startFrom, true); // 목록에서 고른 곡부터. cued에서는 seekTo가 재생을 시작한다.
   state.player.playVideo();
   holdScreen();
   armSleepTimer();
@@ -400,23 +489,91 @@ function startListening() {
     const st = state.player.getPlayerState();
     // 첫 곡 안내 때문에 잠깐 멈춘 것일 수 있으니, 아직 아무 곡도 시작 안 했을 때만 안내한다.
     if (st !== PLAYING && st !== BUFFERING && !state.busy && state.currentIdx < 0) {
-      setMsg(el.padNote, '광고가 나오는 중이면 끝난 뒤 시작돼요. 영상이 멈춰 있으면 위 영상의 ▶를 한 번 눌러 주세요.', 'warn');
+      setMsg(el.padNote, '광고가 나오는 중이면 끝난 뒤 시작돼요. 영상이 멈춰 있으면 위 영상의 재생 버튼을 한 번 눌러 주세요.', 'warn');
       state.startHint = true;
     }
   }, 2500);
 }
 
+/** 시작 버튼 글자: 시작 전에 곡을 골랐으면 그 곡부터 시작한다고 알린다. */
+function renderStartLabel() {
+  if (state.started) {
+    el.start.textContent = '다시 시작';
+    return;
+  }
+  const k = state.startFrom == null ? -1 : state.tracks.findIndex((tr) => tr.t === state.startFrom);
+  el.start.textContent = k >= 0 ? `${k + 1}번째 곡부터 시작` : '재생 시작';
+}
+
+/** 목록의 곡 행에 고른 표시(data-picked)를 맞춘다. */
+function renderPicked() {
+  el.trackList.querySelectorAll('.track').forEach((b, k) => {
+    if (state.startFrom != null && state.tracks[k]?.t === state.startFrom) b.dataset.picked = 'true';
+    else delete b.dataset.picked;
+  });
+  renderStartLabel();
+  renderMini();
+}
+
+/**
+ * 아침 순서: 5~11시이고 최근 기록이 16시간 안이면 body.morning (저장·기록을 위로 올리는 것은 CSS).
+ * 새 영상을 열거나 시작하면 beginSession·열기 쪽에서 해제한다.
+ */
+function applyMorning() {
+  const hour = new Date().getHours();
+  const last = store.get('history', [])[0];
+  const on = hour >= 5 && hour < 12 && !!last && Date.now() - last.at < 16 * 3600000;
+  document.body.classList.toggle('morning', on);
+  if (on) {
+    setSeg('history');
+    setTab('lib');
+  }
+}
+
 function wakeUi() {
   document.body.classList.remove('sleeping');
-  el.menu.hidden = true;
+  el.menu.hidden = !state.started;
+  el.menu.textContent = '잠자기 화면으로';
+  disarmMenu();
   el.tap.hidden = true;
   el.start.hidden = false;
-  el.start.textContent = state.started ? '다시 시작' : '재생 시작';
+  renderStartLabel();
   renderDiagnostics();
 }
 
+/** 메뉴에서 나와 잠자기 화면으로 돌아간다. 말하지도 재생하지도 않고 화면만 바꾼다. */
+function backToSleep() {
+  if (!state.started) return;
+  document.body.classList.add('sleeping');
+  document.body.classList.remove('morning');
+  window.scrollTo(0, 0);
+  el.menu.textContent = '메뉴 열기';
+  el.start.hidden = true;
+  el.tap.hidden = false;
+  renderNow();
+}
+
+// 잠자기 화면의 메뉴 버튼은 잠결에 닿아도 열리지 않게 두 번 눌러야 열린다.
+let menuArmTimer = null;
+function disarmMenu() {
+  clearTimeout(menuArmTimer);
+  menuArmTimer = null;
+  if (document.body.classList.contains('sleeping')) el.menu.textContent = '메뉴 열기';
+}
+
 el.start.addEventListener('click', startListening);
-el.menu.addEventListener('click', wakeUi);
+el.menu.addEventListener('click', () => {
+  if (!document.body.classList.contains('sleeping')) {
+    backToSleep();
+    return;
+  }
+  if (menuArmTimer) {
+    wakeUi();
+    return;
+  }
+  el.menu.textContent = '한 번 더';
+  menuArmTimer = setTimeout(disarmMenu, 2500);
+});
 
 // 잠자기 화면의 큰 판 누르기 → 지금 곡 다시 말하고 저장 (음악이 멈춰 있었으면 다시 틀기)
 el.tap.addEventListener('click', () => {
@@ -425,12 +582,32 @@ el.tap.addEventListener('click', () => {
   state.lastTapAt = now;
   voice.unlock();
   const p = state.player;
-  if (state.needsTapToResume && p?.getPlayerState?.() !== PLAYING) {
+  const st = p?.getPlayerState?.();
+  // 끝났거나 타이머로 멈춘 뒤의 판 누르기: 마지막 곡을 저장하지 않고 아침 화면으로 나간다.
+  if (state.sleepTimerFired || st === ENDED) {
+    voice.say([state.sleepTimerFired ? '타이머로 음악을 껐어요.' : '영상이 끝났어요.']); // 눈 감은 사용자에게 알린다
+    wakeUi();
+    applyMorning();
+    window.scrollTo(0, 0);
+    return;
+  }
+  // 재생할 수 없는 영상이면 저장하지 않고 소리로 알린다.
+  if (state.playerError) {
+    voice.say(['이 영상은 재생할 수 없어요.']);
+    return;
+  }
+  // 영상의 재생 버튼으로 시작해서 목소리가 아직 안 켜졌으면, 이 누름으로 목소리를 켠다.
+  if (state.needsVoiceStart && state.tracks.length) {
+    startListening();
+    return;
+  }
+  // 음악이 멈춰 있으면(우리가 멈춘 게 아닐 때) 한 번 눌러 다시 튼다. 곡 저장은 하지 않는다.
+  if (state.started && !state.busy && st !== PLAYING && (st !== BUFFERING || state.needsTapToResume)) {
     state.needsTapToResume = false;
+    voice.say([PHRASES.resumed]); // unlock → say → playVideo (사이에 await 없음)
     p.playVideo();
     holdScreen();
     setMsg(el.padNote, '');
-    voice.say([PHRASES.resumed]);
     return;
   }
   const tr = state.tracks[state.currentIdx];
@@ -447,13 +624,18 @@ el.tap.addEventListener('click', () => {
 });
 
 // ── 영상 불러오기 ──────────────────────────────────────────────────────────
-async function openVideo(input) {
+async function openVideo(input, { show = false } = {}) {
   const id = extractVideoId(input);
   if (!id) {
     setMsg(el.loadMsg, '유튜브 링크를 알아보지 못했어요. 유튜브 앱에서 공유 → 링크 복사 후 붙여넣어 주세요.', 'error');
     return;
   }
   setMsg(el.loadMsg, '');
+  el.url.value = '';
+  if (show) {
+    scrollPos.play = 0;
+    setTab('play');
+  }
   state.session += 1;
   state.videoId = id;
   state.videoTitle = '';
@@ -462,6 +644,9 @@ async function openVideo(input) {
   state.started = false;
   state.busy = false;
   state.sleepAt = 0;
+  state.playerError = null;
+  state.startFrom = null;
+  state.needsVoiceStart = false;
   releaseScreen();
   renderTimer();
   store.set('last', id);
@@ -542,6 +727,9 @@ function setTracks(tracks, source) {
   state.source = source;
   state.tracksVersion += 1;
   state.currentIdx = -1;
+  state.startFrom = null; // 곡 목록이 바뀌면 고른 곡도 무효
+  // 곡 목록 없이 시작했다가 목록이 나중에 생기면 그때 안내한다.
+  if (state.started && state.needsVoiceStart && tracks.length) setMsg(el.padNote, NOTE_VOICE_OFF, 'warn');
   el.tracksInput.value = tracksToText(tracks);
   renderTracks();
   renderNow();
@@ -577,7 +765,7 @@ async function ensureDjScript({ force = false } = {}) {
   }
   if (!settings.openaiKey) {
     const english = tracks.filter((tr) => /[A-Za-z]/.test(toSpeech(tr.text))).length;
-    if (english) scriptMsg(`영어 이름이 들어간 ${english}곡은 지금 영어 그대로 읽어요. 설정에 OpenAI 키를 넣으면 “베이비몬스터의 디저브”처럼 한글 발음으로 읽어요.`, 'warn');
+    if (english) scriptMsg('OpenAI 키를 넣으면 영어 이름도 한글 발음으로 읽어요.');
     else if (settings.dj) scriptMsg('OpenAI 키가 없어서 미리 준비된 멘트를 돌려 써요. 키를 넣으면 곡마다 새 멘트를 써요.');
     return;
   }
@@ -596,7 +784,7 @@ async function ensureDjScript({ force = false } = {}) {
     state.djScript = script;
     store.set(`dj.${state.videoId}`, script);
     const bad = script.entries.filter((e) => !isValidIntro(e?.intro)).length;
-    scriptMsg(`${tracks.length}곡의 읽는 법과 멘트를 준비했어요.${settings.dj && bad ? ` ${bad}곡은 규칙에 안 맞아 준비된 멘트로 바꿨어요.` : ''} 곡 아래 문장대로 읽어요.`, 'ok');
+    scriptMsg(`${tracks.length}곡의 읽는 법과 멘트를 준비했어요.${settings.dj && bad ? ` ${bad}곡은 규칙에 안 맞아 준비된 멘트로 바꿨어요.` : ''} 곡을 누르면 읽을 문장을 볼 수 있어요.`, 'ok');
   } catch (err) {
     if (run === djRun) scriptMsg(`곡 이름 읽는 법을 받지 못해서 영어 이름은 그대로 읽어요: ${err.message}`, 'error');
   }
@@ -605,6 +793,7 @@ async function ensureDjScript({ force = false } = {}) {
 async function refreshDjAndVoice(options) {
   await ensureDjScript(options);
   renderTracks();
+  renderNow(); // 읽는 법 대본이 오면 화면의 가수·제목 나눔도 달라질 수 있다
   prepareVoice();
 }
 
@@ -631,15 +820,17 @@ async function prepareVoice() {
 
 el.form.addEventListener('submit', (e) => {
   e.preventDefault();
-  openVideo(el.url.value);
+  document.body.classList.remove('morning'); // 새 영상을 열면 아침 순서를 푼다
+  openVideo(el.url.value, { show: true });
 });
 
 el.paste.addEventListener('click', async () => {
+  document.body.classList.remove('morning');
   try {
     const text = await navigator.clipboard.readText();
     if (text) {
       el.url.value = text.trim();
-      openVideo(el.url.value);
+      openVideo(el.url.value, { show: true });
       return;
     }
   } catch { /* 권한 없음: 직접 붙여넣기 */ }
@@ -684,16 +875,19 @@ function addHistory(tr) {
 }
 
 // 새벽에 들은 곡도 '전날 밤'으로 묶는다 (정오 전이면 하루 앞으로).
-function nightLabel(ms) {
+// 5~11시는 그 밤이 이미 끝난 아침이므로, 방금 지난 밤을 '어젯밤'으로 부른다.
+function nightLabel(ms, nowMs = Date.now()) {
   const d = new Date(ms);
   if (d.getHours() < 12) d.setDate(d.getDate() - 1);
-  const today = new Date();
-  if (today.getHours() < 12) today.setDate(today.getDate() - 1);
+  const now = new Date(nowMs);
+  const morning = now.getHours() >= 5 && now.getHours() < 12;
+  const tonight = new Date(now); // 지금 진행 중이거나 방금 끝난 밤
+  if (tonight.getHours() < 12) tonight.setDate(tonight.getDate() - 1);
   const sameDay = (a, b) => a.toDateString() === b.toDateString();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (sameDay(d, today)) return '오늘 밤';
-  if (sameDay(d, yesterday)) return '어젯밤';
+  const before = new Date(tonight);
+  before.setDate(tonight.getDate() - 1);
+  if (sameDay(d, tonight)) return morning ? '어젯밤' : '오늘 밤';
+  if (!morning && sameDay(d, before)) return '어젯밤';
   return `${d.getMonth() + 1}월 ${d.getDate()}일 밤`;
 }
 
@@ -702,7 +896,8 @@ function clock(ms) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-const searchUrl = (text) => `https://www.youtube.com/results?search_query=${encodeURIComponent(text)}`;
+// 곡 이름의 밑줄(babymonster_deserve)은 검색어에서 공백으로 바꾼다.
+const searchUrl = (text) => `https://www.youtube.com/results?search_query=${encodeURIComponent(text.replace(/_/g, ' '))}`;
 
 function link(href, text, className = '') {
   const a = document.createElement('a');
@@ -724,6 +919,17 @@ function songLinks(item) {
   return wrap;
 }
 
+const thumbUrl = (vid) => `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`;
+
+function thumbImg(className, vid) {
+  const img = document.createElement('img');
+  img.className = className;
+  img.alt = '';
+  img.loading = 'lazy';
+  img.src = thumbUrl(vid);
+  return img;
+}
+
 function renderSaved() {
   const saved = store.get('saved', []);
   el.savedList.replaceChildren();
@@ -732,12 +938,28 @@ function renderSaved() {
   for (const item of saved) {
     const li = document.createElement('li');
     li.className = 'song';
+    const { artist, title: songTitle } = songDisplay(item);
+    const main = document.createElement('div');
+    main.className = 'song-main';
     const title = document.createElement('p');
     title.className = 'song-title';
-    title.textContent = item.text;
+    title.textContent = songTitle;
     const meta = document.createElement('p');
     meta.className = 'song-meta';
-    meta.textContent = `${nightLabel(item.at)} ${clock(item.at)}에 저장`;
+    meta.textContent = `${artist ? `${artist} · ` : ''}${nightLabel(item.at)} ${clock(item.at)}에 저장`;
+    main.append(title, meta);
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'more';
+    more.textContent = '더 보기';
+    more.setAttribute('aria-label', `${item.text} 더 보기`);
+    more.setAttribute('aria-expanded', 'false');
+    more.addEventListener('click', () => {
+      const open = li.dataset.open === undefined;
+      if (open) li.dataset.open = '';
+      else delete li.dataset.open;
+      more.setAttribute('aria-expanded', String(open));
+    });
     const row = document.createElement('div');
     row.className = 'song-actions';
     const del = document.createElement('button');
@@ -745,15 +967,24 @@ function renderSaved() {
     del.className = 'link-btn';
     del.textContent = '지우기';
     del.setAttribute('aria-label', `${item.text} 지우기`);
+    // 지우기는 되돌릴 수 없으니 두 번 눌러야 지운다.
+    let armTimer = null;
     del.addEventListener('click', () => {
+      if (!armTimer) {
+        del.textContent = '한 번 더';
+        armTimer = setTimeout(() => { armTimer = null; del.textContent = '지우기'; }, 2500);
+        return;
+      }
+      clearTimeout(armTimer);
       store.set('saved', store.get('saved', []).filter((s) => s.key !== item.key));
       renderSaved();
       renderHistory();
     });
     row.append(songLinks(item), del);
-    li.append(title, meta, row);
+    li.append(thumbImg('song-thumb', item.vid), main, more, row);
     el.savedList.append(li);
   }
+  renderSaveNow();
 }
 
 function renderHistory() {
@@ -776,12 +1007,13 @@ function renderHistory() {
     }
     const li = document.createElement('li');
     li.className = 'history-item';
-    const time = document.createElement('span');
-    time.className = 'clock';
-    time.textContent = clock(item.at);
+    const { artist, title: songTitle } = songDisplay(item);
     const text = document.createElement('span');
     text.className = 'history-text';
-    text.textContent = item.text;
+    text.textContent = songTitle;
+    const time = document.createElement('span');
+    time.className = 'clock';
+    time.textContent = artist ? `${artist} · ${clock(item.at)}` : clock(item.at);
     const find = link(searchUrl(item.text), '찾기', 'find');
     find.setAttribute('aria-label', `${item.text} 유튜브에서 찾기`);
     const star = document.createElement('button');
@@ -790,7 +1022,7 @@ function renderHistory() {
     const on = savedKeys.has(item.key);
     star.setAttribute('aria-pressed', String(on));
     star.setAttribute('aria-label', `${item.text} ${on ? '저장됨' : '저장하기'}`);
-    star.textContent = on ? '★' : '☆';
+    star.textContent = on ? '저장됨' : '저장';
     star.addEventListener('click', () => {
       const saved = store.get('saved', []);
       if (saved.some((s) => s.key === item.key)) {
@@ -803,7 +1035,7 @@ function renderHistory() {
       renderSaved();
       renderHistory();
     });
-    li.append(time, text, find, star);
+    li.append(thumbImg('song-thumb', item.vid), text, time, find, star);
     ol.append(li);
   }
 }
@@ -819,29 +1051,270 @@ el.copySaved.addEventListener('click', async () => {
   setTimeout(() => { el.copySaved.textContent = '목록 복사'; }, 1800);
 });
 
+// ── 탭 / 홈 선반 / 미니 플레이어 / 조작 버튼 (깨어 있을 때만 쓴다) ─────────────
+const scrollPos = {}; // 탭마다 스크롤 위치를 기억한다
+function setTab(name) {
+  const prev = document.body.dataset.tab;
+  if (prev !== name) {
+    scrollPos[prev] = el.scroller.scrollTop;
+    document.body.dataset.tab = name;
+    el.scroller.scrollTop = scrollPos[name] || 0;
+  }
+  el.tabs.forEach((b) => {
+    // 홈도 재생 탭 아래에 있으므로 재생 탭이 켜진 것으로 본다.
+    if (b.dataset.go === name || (name === 'home' && b.dataset.go === 'play')) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+  if (name === 'home') renderShelf();
+  if (name === 'set' && settings.engine === 'typecast' && !state.tcVoices.length) loadTypecastVoices();
+}
+
+function setSeg(name) {
+  document.body.dataset.seg = name;
+  el.segBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.seg === name)));
+}
+
+/** 들은 기록에서 영상마다 가장 최근 것만, 최신순으로 limit개 */
+function pickShelf(history, titleOf, limit = 12) {
+  const seen = new Set();
+  const out = [];
+  for (const h of [...history].sort((a, b) => b.at - a.at)) {
+    if (!h.vid || seen.has(h.vid)) continue;
+    seen.add(h.vid);
+    out.push({ vid: h.vid, title: titleOf(h.vid) || h.from || '제목 없는 영상', at: h.at });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function renderShelf() {
+  const items = pickShelf(store.get('history', []), (vid) => store.get(`tracks.${vid}`, null)?.title);
+  el.shelf.replaceChildren();
+  el.shelfWrap.hidden = items.length === 0;
+  for (const it of items) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'card';
+    b.dataset.vid = it.vid;
+    const title = document.createElement('span');
+    title.className = 'card-title';
+    title.textContent = it.title;
+    const meta = document.createElement('span');
+    meta.className = 'card-meta';
+    meta.textContent = nightLabel(it.at);
+    b.append(thumbImg('card-thumb', it.vid), title, meta);
+    b.addEventListener('click', () => {
+      if (it.vid === state.videoId) {
+        setTab('play');
+        return;
+      }
+      document.body.classList.remove('morning'); // 새 영상을 열면 아침 순서를 푼다
+      openVideo(it.vid, { show: true });
+    });
+    el.shelf.append(b);
+  }
+}
+
+// 값이 달라질 때만 DOM에 쓴다 (uiTick이 0.25초마다 부르므로)
+function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+function setAttr(node, name, val) {
+  if (node.getAttribute(name) !== val) node.setAttribute(name, val);
+}
+function setDisabled(node, v) {
+  if (node.disabled !== v) node.disabled = v;
+}
+
+let miniVid = null;
+function renderMini() {
+  if (miniVid !== state.videoId) {
+    miniVid = state.videoId;
+    if (miniVid) {
+      el.miniThumb.src = thumbUrl(miniVid);
+      el.plHead.style.setProperty('--thumb', `url("${thumbUrl(miniVid)}")`);
+    } else {
+      el.miniThumb.removeAttribute('src');
+      el.plHead.style.removeProperty('--thumb');
+    }
+  }
+  const cur = state.tracks[state.currentIdx];
+  const title = cur ? songDisplay(cur, state.djScript?.entries?.[state.currentIdx]).title : (state.videoTitle || (state.videoId ? '영상' : ''));
+  setText(el.miniTitle, title);
+  renderMiniSub();
+}
+
+/** 미니 플레이어 둘째 줄: 가수, 또는 몇 곡 중 몇 번째, 취침 타이머 */
+function renderMiniSub() {
+  const n = state.tracks.length;
+  const i = state.currentIdx;
+  const cur = state.tracks[i];
+  let text = '';
+  if (cur) {
+    text = songDisplay(cur, state.djScript?.entries?.[i]).artist || `${n}곡 중 ${i + 1}번째`;
+  } else if (n) {
+    const k = state.startFrom == null ? -1 : state.tracks.findIndex((tr) => tr.t === state.startFrom);
+    text = k >= 0 ? `${n}곡 중 ${k + 1}번째부터` : `${n}곡`;
+  }
+  const timer = el.timerNote.hidden ? '' : el.timerNote.textContent;
+  if (timer) text = text ? `${text} · ${timer}` : timer;
+  setText(el.miniSub, text);
+}
+
+/** 지금 곡을 저장했는지 표시. 판 누르기와 같은 저장 키를 쓴다. */
+function renderSaveNow() {
+  const cur = state.tracks[state.currentIdx];
+  el.saveNow.hidden = !cur;
+  if (!cur) return;
+  const on = isSaved(cur);
+  setAttr(el.saveNow, 'aria-pressed', String(on));
+  setAttr(el.saveNow, 'aria-label', on ? '저장한 노래에서 지우기' : '이 곡 저장하기');
+}
+
+// 말없이 저장하거나 지운다.
+el.saveNow.addEventListener('click', () => {
+  const tr = state.tracks[state.currentIdx];
+  if (!tr) return;
+  if (isSaved(tr)) {
+    store.set('saved', store.get('saved', []).filter((s) => s.key !== songKey(tr)));
+    renderSaved();
+    renderHistory();
+  } else {
+    saveSong(tr);
+  }
+});
+
+/** 곡 행·다음·이전: 위치만 옮기고 말은 하지 않는다. 안내는 tick이 곡 바뀜을 보고 한다. */
+function jumpTo(i) {
+  const tr = state.tracks[i];
+  // 안내하려고 멈춘 동안(busy)에 옮기면 sayOverMusic이 이전 곡 위치로 되돌려 누름이 사라진다.
+  if (!tr || !state.playerReady || state.busy || state.playerError) return;
+  state.player.seekTo(tr.t, true);
+  state.player.playVideo();
+}
+
+function stepTrack(dir) {
+  voice.unlock();
+  const i = state.currentIdx;
+  const cur = state.tracks[i];
+  // 이전: 곡이 3초 넘게 흘렀으면 이 곡 처음으로 (곡 번호가 그대로라 안내는 없다)
+  if (dir < 0 && cur && state.playerReady && (state.player.getCurrentTime() || 0) - cur.t > 3) {
+    jumpTo(i);
+    return;
+  }
+  jumpTo(i + dir);
+}
+
+function isRunning() {
+  const st = state.player?.getPlayerState?.();
+  return st === PLAYING || (st === BUFFERING && !state.needsTapToResume);
+}
+
+function togglePlay() {
+  if (!state.playerReady || !state.started || state.busy || state.playerError) return;
+  if (isRunning()) {
+    state.resumeOk = true; // checkResumed의 자동 재개를 끊고, 취침 타이머가 사용자 멈춤으로 본다
+    state.player.pauseVideo();
+    return;
+  }
+  voice.unlock();
+  voice.say([PHRASES.resumed]); // unlock → say → playVideo (사이에 await 없음)
+  state.needsTapToResume = false;
+  state.needsVoiceStart = false;
+  state.timerFiredAt = -1e9; // 사용자가 직접 튼 것이므로 타이머 직후 재생으로 보지 않는다
+  state.player.playVideo();
+  holdScreen();
+  setMsg(el.padNote, '');
+}
+
+/** 진행 막대와 버튼 상태. tick과 별개이고 읽기만 한다. 오류가 나도 앱이 멈추지 않게 보호한다. */
+function uiTick() {
+  try {
+    if (document.hidden || document.body.classList.contains('sleeping')) return;
+    renderMiniSub();
+    const p = state.player;
+    if (!p || !state.playerReady || !state.started) return;
+    const running = isRunning();
+    const i = state.currentIdx;
+    const n = state.tracks.length;
+    const cur = state.tracks[i];
+    const t = p.getCurrentTime() || 0;
+    const start = cur?.t ?? 0;
+    const end = state.tracks[i + 1]?.t ?? (p.getDuration?.() || 0);
+    const span = end - start;
+    const frac = span > 0 ? Math.min(1, Math.max(0, (t - start) / span)) : 0;
+    const scale = `scaleX(${frac.toFixed(3)})`;
+    if (el.progFill.style.transform !== scale) el.progFill.style.transform = scale;
+    setText(el.progCur, formatTime(Math.max(0, t - start)));
+    setText(el.progEnd, span > 0 ? formatTime(span) : '');
+    const playing = String(running || state.busy);
+    for (const b of [el.trToggle, el.miniToggle]) {
+      if (b.dataset.playing !== playing) b.dataset.playing = playing;
+      setAttr(b, 'aria-label', playing === 'true' ? '멈춤' : '재생');
+    }
+    setDisabled(el.trPrev, state.busy || i < 0 || (i === 0 && t - start <= 3));
+    setDisabled(el.trNext, state.busy || i + 1 >= n);
+    if (running && document.body.classList.contains('morning')) document.body.classList.remove('morning');
+  } catch { /* 화면 갱신 오류가 재생과 안내를 막지 않게 한다 */ }
+}
+setInterval(uiTick, 250);
+
+el.backHome.addEventListener('click', () => setTab('home'));
+el.miniOpen.addEventListener('click', () => setTab('play'));
+el.trPrev.addEventListener('click', () => stepTrack(-1));
+el.trNext.addEventListener('click', () => stepTrack(1));
+el.trToggle.addEventListener('click', togglePlay);
+el.miniToggle.addEventListener('click', togglePlay);
+el.tabs.forEach((b) => b.addEventListener('click', () => {
+  const go = b.dataset.go === 'play' && !state.videoId ? 'home' : b.dataset.go; // 영상이 없으면 재생 탭은 빈 화면이라 홈으로
+  if (document.body.dataset.tab === go) el.scroller.scrollTo({ top: 0, behavior: 'smooth' });
+  else setTab(go);
+}));
+el.segBtns.forEach((b) => b.addEventListener('click', () => setSeg(b.dataset.seg)));
+// 잠자기 화면으로 들어가면 안쪽 스크롤을 맨 위로 되돌려 판이 가려지지 않게 한다.
+let wasSleeping = false;
+new MutationObserver(() => {
+  const now = document.body.classList.contains('sleeping');
+  if (now && !wasSleeping) el.scroller.scrollTop = 0;
+  wasSleeping = now;
+}).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
 // ── 곡 목록 / 지금 곡 표시 ─────────────────────────────────────────────────
 function renderVideoTitle() {
   el.videoTitle.textContent = state.videoTitle || '';
   el.videoTitle.hidden = !state.videoTitle;
+  el.topTitle.textContent = state.videoTitle || '';
+  renderMini();
 }
 
 function renderTracks() {
   el.trackList.replaceChildren();
   const n = state.tracks.length;
-  el.trackMeta.textContent = n ? `${n}곡 · ${state.source}` : '';
+  const src = state.source;
+  el.trackMeta.textContent = !n ? ''
+    : src === '직접 입력' ? `${n}곡 · 직접 입력`
+      : src ? `${n}곡 · ${src}에서 찾음` : `${n}곡`;
   state.tracks.forEach((tr, i) => {
     const li = document.createElement('li');
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'track';
+    b.dataset.n = String(i + 1);
     if (i === state.currentIdx) b.setAttribute('aria-current', 'true');
+    const { artist, title } = songDisplay(tr, state.djScript?.entries?.[i]);
     const time = document.createElement('span');
     time.className = 'track-time';
     time.textContent = formatTime(tr.t);
     const name = document.createElement('span');
     name.className = 'track-name';
-    name.textContent = tr.text;
+    name.textContent = title;
     b.append(time, name);
+    if (artist) {
+      const by = document.createElement('span');
+      by.className = 'track-artist';
+      by.textContent = artist;
+      b.append(by);
+    }
     // 실제로 어떻게 읽을지 미리 보여 준다.
     const line = document.createElement('span');
     line.className = 'track-dj';
@@ -849,13 +1322,18 @@ function renderTracks() {
     b.append(line);
     b.addEventListener('click', () => {
       if (!state.playerReady) return;
-      state.player.seekTo(tr.t, true);
-      if (!state.started) startListening();
-      else state.player.playVideo();
+      if (state.started) {
+        jumpTo(i);
+        return;
+      }
+      // 시작 전에는 재생하지 않고 시작할 곡만 고른다. 같은 곡을 다시 누르면 고름을 푼다.
+      state.startFrom = state.startFrom === tr.t ? null : tr.t;
+      renderPicked();
     });
     li.append(b);
     el.trackList.append(li);
   });
+  renderPicked();
 }
 
 function renderNow() {
@@ -863,14 +1341,32 @@ function renderNow() {
   const n = state.tracks.length;
   const cur = state.tracks[i];
   const next = state.tracks[i + 1];
-  el.nowLabel.textContent = cur ? `지금 곡 · ${i + 1} / ${n}` : (n ? `${n}곡 준비됨` : '곡 목록 없음');
-  const emptyTitle = state.videoId ? '아래 ‘곡 목록’에 시간표를 넣어 주세요' : '모음 영상 링크를 넣어 주세요';
-  el.nowTitle.textContent = cur ? cur.text : (n ? state.tracks[0].text : emptyTitle);
-  el.nowNext.textContent = cur ? (next ? `다음 · ${next.text}` : '마지막 곡') : (n ? '첫 곡' : '');
+  const shownIdx = cur ? i : 0; // 아직 곡이 안 시작했으면 첫 곡을 보여 준다
+  const shown = state.tracks[shownIdx];
+  const d = shown ? songDisplay(shown, state.djScript?.entries?.[shownIdx]) : null;
+  el.nowLabel.textContent = cur ? `${n}곡 중 ${i + 1}번째` : (n ? `${n}곡 준비됨` : '곡 목록 없음');
+  const emptyTitle = state.videoId ? '시간표를 넣으면 곡 이름을 읽어 드려요' : '모음 영상 링크를 넣어 주세요';
+  el.nowTitle.textContent = d ? d.title : emptyTitle;
+  el.nowArtist.textContent = d?.artist || '';
+  el.nowArtist.hidden = !d?.artist;
+  setText(el.tracksH, state.started ? '다음 트랙' : '곡 목록');
+  // 화면 단계(계약): started→live, playerError→loaded, 곡 있음→ready, 영상 있음→loaded, 그 외 empty.
+  document.body.dataset.stage = state.started ? 'live'
+    : state.playerError ? 'loaded'
+      : n ? 'ready'
+        : state.videoId ? 'loaded' : 'empty';
+  // 다이얼 눈금과 바늘 (CSS 변수)
+  el.pad.style.setProperty('--n', String(Math.max(n - 1, 1)));
+  el.pad.style.setProperty('--i', String(Math.max(i, 0)));
+  el.nowNext.textContent = cur
+    ? (next ? `다음은 ${songDisplay(next, state.djScript?.entries?.[i + 1]).title}` : '마지막 곡이에요')
+    : (n ? '첫 곡부터 시작해요' : '');
   el.trackList.querySelectorAll('.track').forEach((b, k) => {
     if (k === i) b.setAttribute('aria-current', 'true');
     else b.removeAttribute('aria-current');
   });
+  renderSaveNow();
+  renderMini();
 }
 
 // ── 설정 ──────────────────────────────────────────────────────────────────
@@ -1034,9 +1530,6 @@ el.typecastVoice.addEventListener('change', () => {
   const v = state.tcVoices.find((x) => x.voice_id === el.typecastVoice.value);
   if (v) chooseTypecastVoice(v);
 });
-el.settingsBox.addEventListener('toggle', () => {
-  if (el.settingsBox.open && settings.engine === 'typecast' && !state.tcVoices.length) loadTypecastVoices();
-});
 
 // ── 내 목소리 등록 ────────────────────────────────────────────────────────
 el.readingScript.textContent = READING_SCRIPT;
@@ -1130,10 +1623,21 @@ el.prefix.addEventListener('change', () => {
   settings.prefix = el.prefix.checked;
   saveSettings();
 });
-el.testVoice.addEventListener('click', () => {
+// 설정의 '목소리 들어보기'와 잠자기 단계의 복구 도구가 같이 쓴다.
+function testVoice() {
   voice.unlock();
   if (state.tracks.length) voice.say(announcement(0));
   else voice.say([PHRASES.next, '아이유, 밤편지']);
+}
+el.testVoice.addEventListener('click', testVoice);
+el.rescueTest?.addEventListener('click', testVoice);
+// 음성 진단: 설정과 진단을 열고 그 자리로 간다. 잠자기 화면이면 화면만 먼저 깨운다(말·재생 없음).
+el.diagOpen?.addEventListener('click', () => {
+  if (document.body.classList.contains('sleeping')) wakeUi();
+  setTab('set');
+  el.diag.open = true;
+  renderDiagnostics();
+  el.diag.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 
 el.sleepTimer.value = String(settings.sleepMinutes);
@@ -1179,9 +1683,10 @@ if (settings.engine === 'typecast') loadTypecastVoices();
 renderSaved();
 renderHistory();
 renderNow();
+setSeg('saved');
+setTab('home');
+applyMorning();
 const fromQuery = new URLSearchParams(location.search).get('v');
 const last = fromQuery || store.get('last', null);
-if (last) {
-  el.url.value = fromQuery ? fromQuery : `https://youtu.be/${last}`;
-  openVideo(last);
-}
+if (fromQuery) setTab('play');
+if (last) openVideo(last);
