@@ -1,13 +1,13 @@
 import {
   parseTracklist, pickTracklist, toSpeech, extractVideoId, indexAt, formatTime, tracksToText,
-} from './tracklist.js?v=20261109l';
-import { createVoice, PHRASES, OPENAI_VOICES } from './voice.js?v=20261109l';
+} from './tracklist.js?v=20261110a';
+import { createVoice, PHRASES, OPENAI_VOICES } from './voice.js?v=20261110a';
 import {
   buildDjRequest, responseText, parseDjScript, trackSignature, isValidIntro, djLine, djOpening, songSentence, songDisplay,
-} from './dj.js?v=20261109l';
+} from './dj.js?v=20261110a';
 import {
   listVoices, recommendVoices, voiceSettings, voiceLabel, createClone, toCloneWav, startRecording, READING_SCRIPT,
-} from './typecast.js?v=20261109l';
+} from './typecast.js?v=20261110a';
 
 const $ = (sel) => document.querySelector(sel);
 const PLAYING = 1;

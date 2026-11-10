@@ -69,6 +69,11 @@ a { color: var(--ink-2); text-decoration: none; }
   display: flex;
   flex-direction: column;
 }
+/* 홈 화면 앱(세로): 실제 화면 높이를 쓰고, iOS가 상태 표시줄 아래를 흐리게 덮는 구간(약 36)을 비운다 */
+@media (orientation: portrait) {
+  .standalone, .standalone body, .standalone .app { height: var(--app-h); }
+  .standalone .app { padding-top: calc(env(safe-area-inset-top, 0px) + 36px); }
+}
 .scroller {
   flex: 1 1 auto;
   min-height: 0;
@@ -77,6 +82,8 @@ a { color: var(--ink-2); text-decoration: none; }
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
 }
 .scroller::-webkit-scrollbar { display: none; }
 .pane { display: none; padding: 12px var(--gr) 24px var(--gl); }
@@ -89,7 +96,7 @@ body[data-tab="set"] #settings { display: block; }
 .top { flex: none; display: flex; align-items: center; height: 44px; padding: 0 var(--gr) 0 var(--gl); }
 .brand { margin: 0; font: 700 24px/1.2 var(--font); letter-spacing: -0.03em; }
 .top-title {
-  flex: 1 1 0; min-width: 0; margin: 0 34px 0 0; text-align: center;
+  flex: 1 1 0; min-width: 0; margin: 0 28px 0 0; text-align: center;
   color: var(--ink-2); font-size: 13px; line-height: 1.4; font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -110,7 +117,7 @@ body[data-tab="home"] :is(#back-home, .top-title) { display: none; }
 .ti-lib { --ic: var(--i-t-lib); }
 .ti-set { --ic: var(--i-t-set); }
 .icon-btn {
-  flex: none; display: grid; place-items: center; width: 44px; height: 44px; margin-left: -10px; padding: 0;
+  flex: none; display: grid; place-items: center; width: 44px; height: 44px; margin-left: -16px; padding: 0;
   border: 0; background: none; color: var(--ink); cursor: pointer; touch-action: manipulation; --ic: var(--i-back);
 }
 
@@ -241,7 +248,7 @@ body[data-stage="live"].morning:not([data-tab="play"]) .stage { position: fixed;
 }
 .now-artist:empty { display: none; }
 .save-now {
-  position: absolute; top: 9px; right: -10px; z-index: 2;
+  position: absolute; top: 9px; right: -14px; z-index: 2;
   display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
   border: 0; background: none; color: var(--ink-2); cursor: pointer; touch-action: manipulation;
   --ic: var(--i-mark); --is: 26px;
@@ -328,7 +335,7 @@ body[data-stage="loaded"] #sleep-timer { display: none; }
 /* 취침 타이머: 칩처럼 보이되, 누르는 칸은 44 */
 .chip-select {
   flex: none; width: auto; height: 44px; min-height: 0; padding: 0 30px 0 12px;
-  border: 6px solid transparent; border-radius: 22px; background-clip: padding-box;
+  margin-right: -6px; border: 6px solid transparent; border-radius: 22px; background-clip: padding-box;
   background-color: var(--fill); background-position: right 6px center; background-size: 18px;
   font-size: 16px; font-weight: 600; line-height: 1;
 }
@@ -354,7 +361,7 @@ body[data-stage="empty"] #mini, body.sleeping #mini, body[data-stage="live"][dat
 body:not([data-stage="ready"]) #start-btn { display: none; }
 body:not([data-stage="live"]) #mini-toggle { display: none; }
 .mini-open {
-  flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 0 0 10px;
+  flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 0 0 8px;
   border: 0; background: none; color: inherit; text-align: left; cursor: pointer; touch-action: manipulation;
 }
 .mini-thumb { flex: none; width: 40px; height: 40px; border-radius: 4px; object-fit: cover; background: var(--fill-2); }
@@ -398,7 +405,7 @@ body[data-tab="set"] .tab[data-go="set"] { color: var(--ink); }
 /* 잠자기 화면: 영상 아래 전부가 판이다. 눈이 부시지 않게 글자는 어둡게. 탭과 상관없이 영상과 판만 보인다 */
 body.sleeping { background: #000; }
 body.sleeping :is(.top, .tabbar, .mini, #load-msg) { display: none; }
-body.sleeping #scroller { display: flex; flex-direction: column; overflow: hidden; }
+body.sleeping #scroller { display: flex; flex-direction: column; overflow: hidden; -webkit-mask-image: none; mask-image: none; }
 body.sleeping #scroller > .pane:not(#pane-play) { display: none; }
 body.sleeping #scroller > #pane-play { display: flex; flex: 1; flex-direction: column; padding: 0; }
 body.sleeping :is(.progress, .transport, .rescue, .pl-head, .tracks) { display: none; }
@@ -509,9 +516,9 @@ body[data-stage="live"] .track-list li:has(~ li > .track[aria-current="true"]) {
 }
 .track:active { background: var(--fill); }
 .track::before {
-  grid-area: c; justify-self: center;
+  grid-area: c; justify-self: start;
   content: attr(data-n);
-  width: 28px; text-align: center;
+  width: 28px; text-align: left;
   color: var(--ink-2); font-size: 14px; line-height: 20px; font-weight: 500;
 }
 .track-name {
@@ -528,7 +535,7 @@ body[data-stage="live"] .track-list li:has(~ li > .track[aria-current="true"]) {
   background: var(--ink); color: #000; font-size: 13px; font-weight: 600;
 }
 .track[aria-current="true"]::before {
-  content: ""; width: 16px; height: 16px; margin-top: 2px; border-radius: 0; background: var(--ink);
+  content: ""; width: 16px; height: 16px; margin-top: 2px; margin-left: -2px; border-radius: 0; background: var(--ink);
   -webkit-mask: var(--i-eq) center / 16px no-repeat; mask: var(--i-eq) center / 16px no-repeat;
 }
 .track[aria-current="true"] .track-name,
@@ -576,7 +583,7 @@ body[data-seg="saved"] .history, body[data-seg="history"] .saved { display: none
 }
 .song-meta { margin: 2px 0 0; color: var(--ink-2); font-size: 13px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .more {
-  grid-area: b; justify-self: end; display: grid; place-items: center; width: 44px; height: 44px; margin-right: -10px; padding: 0;
+  grid-area: b; justify-self: end; display: grid; place-items: center; width: 44px; height: 44px; margin-right: -13px; padding: 0;
   border: 0; background: none; color: var(--ink-2); cursor: pointer; touch-action: manipulation; --ic: var(--i-more); font-size: 0;
 }
 .more:active, .more[aria-expanded="true"] { color: var(--ink); }
@@ -605,8 +612,8 @@ body[data-seg="saved"] .history, body[data-seg="history"] .saved { display: none
   width: 44px; height: 44px; padding: 0; border: 0; background: none; cursor: pointer;
   color: var(--ink-2); font-size: 0; line-height: 0; overflow: hidden; align-self: center;
 }
-.find { grid-column: 3; --ic: var(--i-search); }
-.star { grid-column: 4; justify-self: end; margin-right: -10px; --ic: var(--i-mark); }
+.find { grid-column: 3; margin-left: 5px; --ic: var(--i-search); }
+.star { grid-column: 4; justify-self: end; margin-right: -15px; --ic: var(--i-mark); }
 .star[aria-pressed="true"] { color: var(--ink); --ic: var(--i-mark-on); }
 .find:active, .star:active { color: var(--ink); }
 
@@ -728,5 +735,5 @@ audio { width: 100%; max-width: 100%; }
 @media (orientation: landscape) and (max-height: 500px) {
   html, body { height: auto; overflow: auto; }
   .app { height: auto; min-height: 100vh; min-height: 100dvh; }
-  #scroller { flex: none; overflow: visible; }
+  #scroller { flex: none; overflow: visible; -webkit-mask-image: none; mask-image: none; }
 }

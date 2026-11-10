@@ -2,7 +2,7 @@
 // AI는 멘트와 읽는 법만 주고, 곡 이름 자리는 앱이 채운다. 이 앱의 목적이 곡 이름을 정확히 아는 것이라,
 // 한글 이름은 곡 목록 글자와 맞을 때만 쓰고, 화면과 저장 목록에는 원래 글자를 그대로 둔다.
 // DOM이나 네트워크에 의존하지 않는 순수 함수만 둔다.
-import { toSpeech, speakPiece, splitSong } from './tracklist.js?v=20261109l';
+import { toSpeech, speakPiece, splitSong } from './tracklist.js?v=20261110a';
 
 export const DJ_MODEL = 'gpt-6.1-sol';
 export const SLOT = '{곡}';
