@@ -3,7 +3,7 @@
 // - OpenAI / Typecast 음성: 문장을 mp3로 받아 <audio>로 재생한다. 미디어 경로라 아이폰에서 더 확실하다.
 //   Typecast는 자연스러운 한국어 목소리와 내 목소리(복제)를 쓸 수 있다.
 // 새로 말하면 이전 말은 끊는다. 무엇을 말했고 어떻게 됐는지 진단 기록을 남긴다.
-import { synthesize } from './typecast.js?v=20261110a';
+import { synthesize } from './typecast.js?v=20261110b';
 
 export const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts';
 export const OPENAI_VOICES = ['marin', 'cedar', 'nova', 'shimmer', 'sage', 'coral', 'alloy', 'ballad', 'verse', 'ash', 'echo', 'fable', 'onyx'];

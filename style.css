@@ -370,8 +370,9 @@ body:not([data-stage="live"]) #mini-toggle { display: none; }
 .mini-title { font-size: 14px; line-height: 18px; font-weight: 600; }
 .mini-sub { color: var(--ink-2); font-size: 12px; line-height: 16px; }
 .mini-sub:empty { display: none; }
+/* "재생 시작" 버튼은 읽기용 글자가 격자 줄을 하나 더 만든다. 줄 묶음을 가운데 둬야 아이콘이 원 가운데 온다 */
 .mini-play {
-  flex: none; display: grid; place-items: center; width: 44px; height: 44px; margin-right: 8px; padding: 0;
+  flex: none; display: grid; place-items: center; place-content: center; width: 44px; height: 44px; margin-right: 8px; padding: 0;
   border: 0; border-radius: 50%; background: var(--ink); color: #000;
   font-size: 0; line-height: 0; overflow: hidden; cursor: pointer; touch-action: manipulation; --is: 20px; --ic: var(--i-play);
 }
